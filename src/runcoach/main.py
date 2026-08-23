@@ -1,0 +1,23 @@
+"""FastAPI application entry point."""
+
+from fastapi import FastAPI
+
+from runcoach import __version__
+from runcoach.api.routes.health import router as health_router
+from runcoach.config import get_settings
+
+
+def create_app() -> FastAPI:
+    """Build and configure the FastAPI application."""
+
+    settings = get_settings()
+    application = FastAPI(
+        title=settings.app_name,
+        version=__version__,
+        description="Running-performance analytics and coaching API.",
+    )
+    application.include_router(health_router)
+    return application
+
+
+app = create_app()
