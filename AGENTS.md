@@ -8,7 +8,7 @@ appropriately scoped machine-learning feature, and produces evidence-backed coac
 explanations.
 
 All contributors and coding agents must preserve scientific honesty, privacy, reproducibility,
-and the one-month MVP scope.
+and the approved product scope and acceptance criteria.
 
 ## Working method
 
