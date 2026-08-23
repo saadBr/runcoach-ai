@@ -1,0 +1,53 @@
+name: runcoach-ai
+
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-runcoach}
+      POSTGRES_USER: ${POSTGRES_USER:-runcoach}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-runcoach-local}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-runcoach} -d ${POSTGRES_DB:-runcoach}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      RUNCOACH_ENVIRONMENT: development
+      RUNCOACH_LOG_LEVEL: INFO
+      RUNCOACH_API_HOST: 0.0.0.0
+      RUNCOACH_API_PORT: 8000
+      RUNCOACH_DATABASE_URL: postgresql+psycopg://runcoach:runcoach-local@db:5432/runcoach
+      RUNCOACH_PRIVATE_DATA_DIR: /app/data/private
+      RUNCOACH_LLM_PROVIDER: disabled
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data/private:/app/data/private
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/ready')",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+volumes:
+  postgres_data:
