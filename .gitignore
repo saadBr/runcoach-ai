@@ -1,0 +1,65 @@
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Personal Garmin and Strava data
+/data/
+/private-data/
+/exports/
+*.fit
+*.FIT
+*.gpx
+*.GPX
+*.tcx
+*.TCX
+*.zip
+*.ZIP
+activities.csv
+activities_*.csv
+
+# Explicit exception for sanitized test fixtures
+!tests/fixtures/
+!tests/fixtures/**
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyd
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+build/
+dist/
+*.egg-info/
+
+# Databases and generated artifacts
+*.db
+*.sqlite
+*.sqlite3
+.pgdata/
+postgres-data/
+artifacts/
+mlruns/
+
+# Logs and temporary files
+*.log
+*.tmp
+.cache/
+tmp/
+
+# Editors
+.vscode/
+.idea/
+
+# Operating systems
+.DS_Store
+Thumbs.db
+Desktop.ini
