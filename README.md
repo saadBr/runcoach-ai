@@ -102,6 +102,7 @@ Invoke-RestMethod 'http://localhost:8000/health/ready'
 - [Requirements](docs/requirements.md)
 - [Architecture](docs/architecture.md)
 - [Data model](docs/data-model.md)
+- [Data source audit](docs/data-source-audit.md)
 - [Machine-learning methodology](docs/ml-methodology.md)
 - [Agent workflow](docs/agent-workflow.md)
 - [Testing strategy](docs/testing-strategy.md)
