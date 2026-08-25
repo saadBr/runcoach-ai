@@ -12,6 +12,7 @@ from runcoach.ingestion.contracts import (
     SourceReference,
     ValidationFinding,
 )
+from runcoach.ingestion.strava_csv import parse_strava_activities_csv
 
 __all__ = [
     "ActivityKind",
@@ -24,4 +25,5 @@ __all__ = [
     "SourceProvider",
     "SourceReference",
     "ValidationFinding",
+    "parse_strava_activities_csv",
 ]

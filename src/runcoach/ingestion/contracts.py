@@ -38,6 +38,7 @@ class ActivityKind(StrEnum):
     RUNNING = "running"
     TRAIL_RUNNING = "trail_running"
     TREADMILL_RUNNING = "treadmill_running"
+    OTHER = "other"
 
 
 class FindingSeverity(StrEnum):
@@ -61,6 +62,7 @@ class SourceReference(ContractModel):
     source_format: SourceFormat
     source_file_name: Annotated[str, Field(min_length=1, max_length=1_024)]
     content_sha256: Sha256Digest
+    referenced_file_name: Annotated[str, Field(min_length=1, max_length=1_024)] | None = None
     source_activity_id: Annotated[str, Field(min_length=1, max_length=255)] | None = None
     source_row_number: Annotated[int, Field(ge=1)] | None = None
 
