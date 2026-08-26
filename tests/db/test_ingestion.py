@@ -204,6 +204,7 @@ def test_reconciliation_is_persisted_with_provenance(
     assert source_activity is not None
     assert source_activity.activity_id == activity.id
     assert source_activity.external_activity_id == "100"
+    assert source_activity.raw_metadata["referenced_file_name"] == "activities/100.fit.gz"
     source_file_link = db_session.scalar(select(SourceActivityFile))
     assert source_file_link is not None
     assert source_file_link.source_activity_id == source_activity.id

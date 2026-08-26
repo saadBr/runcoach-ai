@@ -196,6 +196,7 @@ def _source_metadata(
         "source_row_number": activity.source.source_row_number,
         "activity_kind": activity.activity_kind.value,
         "match_method": match_method.value,
+        "referenced_file_name": activity.source.referenced_file_name,
     }
 
     optional_values: dict[str, Any] = {
@@ -488,6 +489,20 @@ class ReconciliationPersistenceService:
                 self._session.add(source_activity)
                 created_sources += 1
 
+            source_activity.source_start_time = representation.start_time_utc
+            source_activity.source_sport = representation.provider_activity_type
+            source_activity.source_distance_m = _decimal(representation.distance_m)
+            source_activity.source_duration_ms = _milliseconds(representation.elapsed_time_s)
+            source_activity.dedupe_fingerprint = _dedupe_fingerprint(representation)
+
+            updated_metadata = dict(source_activity.raw_metadata)
+            updated_metadata.update(
+                _source_metadata(
+                    representation,
+                    reconciled.match_method,
+                )
+            )
+            source_activity.raw_metadata = updated_metadata
             source_activity.activity_id = activity.id
             source_activity.resolution_status = "canonical"
             source_records[reference_key] = source_activity
