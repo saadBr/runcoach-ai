@@ -4,7 +4,7 @@ from alembic import context
 from sqlalchemy import engine_from_config, pool
 
 from runcoach.config import get_settings
-from runcoach.db.base import Base
+from runcoach.db import models
 
 config = context.config
 settings = get_settings()
@@ -14,7 +14,7 @@ config.set_main_option(
     settings.database_url.replace("%", "%%"),
 )
 
-target_metadata = Base.metadata
+target_metadata = models.Base.metadata
 
 
 def run_migrations_offline() -> None:
