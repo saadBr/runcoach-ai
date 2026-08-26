@@ -21,6 +21,7 @@ from runcoach.db.models import (
     ImportBatch,
     ImportFile,
     SourceActivity,
+    SourceActivityFile,
 )
 from runcoach.ingestion.contracts import (
     NormalizedActivity,
@@ -126,7 +127,12 @@ def _milliseconds(value: float | int | None) -> int | None:
         return None
 
     milliseconds = Decimal(str(value)) * Decimal(1000)
-    return int(milliseconds.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+    return int(
+        milliseconds.quantize(
+            Decimal("1"),
+            rounding=ROUND_HALF_UP,
+        )
+    )
 
 
 def _local_start_date(
@@ -173,7 +179,7 @@ def _dedupe_fingerprint(activity: NormalizedActivity) -> str:
             activity.source.provider.value,
             activity.start_time_utc.astimezone(UTC).isoformat(),
             activity.activity_kind.value,
-            "" if distance is None else str(distance.quantize(Decimal("0.001"))),
+            ("" if distance is None else str(distance.quantize(Decimal("0.001")))),
             "" if elapsed_time is None else str(elapsed_time),
         )
     )
@@ -228,10 +234,12 @@ class ReconciliationPersistenceService:
 
         if not athlete_timezone.strip():
             raise ValueError("athlete_timezone must not be blank")
+
         try:
             ZoneInfo(athlete_timezone)
         except ZoneInfoNotFoundError as error:
             raise ValueError("athlete_timezone must be a valid IANA timezone.") from error
+
         if not parser_bundle_version.strip():
             raise ValueError("parser_bundle_version must not be blank")
         if not files:
@@ -424,7 +432,10 @@ class ReconciliationPersistenceService:
                 name=reconciled.canonical.name,
                 start_time_utc=reconciled.canonical.start_time_utc,
                 original_timezone=reconciled.canonical.timezone_name,
-                local_start_date=reconciled.canonical.start_time_utc.date(),
+                local_start_date=_local_start_date(
+                    reconciled.canonical,
+                    athlete.timezone,
+                ),
                 distance_m=Decimal(0),
                 moving_time_ms=0,
                 elapsed_time_ms=0,
@@ -462,7 +473,7 @@ class ReconciliationPersistenceService:
                 source_activity = SourceActivity(
                     import_file_id=import_file.id,
                     provider=representation.source.provider.value,
-                    external_activity_id=representation.source.source_activity_id,
+                    external_activity_id=(representation.source.source_activity_id),
                     source_start_time=representation.start_time_utc,
                     source_sport=representation.provider_activity_type,
                     source_distance_m=_decimal(representation.distance_m),
@@ -482,12 +493,44 @@ class ReconciliationPersistenceService:
             source_records[reference_key] = source_activity
 
         self._session.flush()
+
+        for source_activity in source_records.values():
+            self._ensure_source_file_link(
+                source_activity=source_activity,
+                import_file_id=source_activity.import_file_id,
+                file_role="summary",
+            )
+
         self._persist_field_provenance(
             activity=activity,
             reconciled=reconciled,
             source_records=source_records,
         )
         return created, created_sources
+
+    def _ensure_source_file_link(
+        self,
+        *,
+        source_activity: SourceActivity,
+        import_file_id: UUID,
+        file_role: str,
+    ) -> None:
+        existing = self._session.scalar(
+            select(SourceActivityFile)
+            .where(
+                SourceActivityFile.source_activity_id == source_activity.id,
+                SourceActivityFile.import_file_id == import_file_id,
+            )
+            .limit(1)
+        )
+        if existing is None:
+            self._session.add(
+                SourceActivityFile(
+                    source_activity_id=source_activity.id,
+                    import_file_id=import_file_id,
+                    file_role=file_role,
+                )
+            )
 
     def _find_source_activity(
         self,

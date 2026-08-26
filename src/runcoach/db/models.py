@@ -9,6 +9,7 @@ from sqlalchemy import (
     CHAR,
     JSON,
     BigInteger,
+    Boolean,
     CheckConstraint,
     Date,
     DateTime,
@@ -379,6 +380,191 @@ class SourceActivity(Base):
         DateTime(timezone=True),
         nullable=False,
         server_default=func.now(),
+    )
+
+
+class SourceActivityFile(Base):
+    """Associate a provider activity with each contributing import file."""
+
+    __tablename__ = "source_activity_files"
+    __table_args__ = (
+        CheckConstraint(
+            "file_role IN ('summary', 'sensor', 'route', 'attachment')",
+            name="source_activity_files_role",
+        ),
+        UniqueConstraint(
+            "source_activity_id",
+            "import_file_id",
+            name="uq_source_activity_files_source_file",
+        ),
+        Index("ix_source_activity_files_import_file", "import_file_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        primary_key=True,
+        default=uuid4,
+    )
+    source_activity_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("source_activities.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    import_file_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("import_files.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    file_role: Mapped[str] = mapped_column(String(16), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+
+class Lap(Base):
+    """One normalized lap belonging to a canonical activity."""
+
+    __tablename__ = "laps"
+    __table_args__ = (
+        CheckConstraint("lap_index >= 0", name="laps_index"),
+        CheckConstraint(
+            "distance_m IS NULL OR distance_m >= 0",
+            name="laps_distance",
+        ),
+        CheckConstraint(
+            "moving_time_ms IS NULL OR moving_time_ms >= 0",
+            name="laps_moving_time",
+        ),
+        CheckConstraint(
+            "elapsed_time_ms IS NULL OR elapsed_time_ms >= 0",
+            name="laps_elapsed_time",
+        ),
+        UniqueConstraint(
+            "activity_id",
+            "lap_index",
+            name="uq_laps_activity_index",
+        ),
+        Index("ix_laps_activity", "activity_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        primary_key=True,
+        default=uuid4,
+    )
+    activity_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("activities.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    lap_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    start_time_utc: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    distance_m: Mapped[Decimal | None] = mapped_column(
+        Numeric(12, 3),
+        nullable=True,
+    )
+    moving_time_ms: Mapped[int | None] = mapped_column(
+        BigInteger,
+        nullable=True,
+    )
+    elapsed_time_ms: Mapped[int | None] = mapped_column(
+        BigInteger,
+        nullable=True,
+    )
+    elevation_gain_m: Mapped[Decimal | None] = mapped_column(
+        Numeric(10, 3),
+        nullable=True,
+    )
+    average_hr_bpm: Mapped[Decimal | None] = mapped_column(
+        Numeric(6, 2),
+        nullable=True,
+    )
+    max_hr_bpm: Mapped[int | None] = mapped_column(
+        SmallInteger,
+        nullable=True,
+    )
+    average_cadence_spm: Mapped[Decimal | None] = mapped_column(
+        Numeric(8, 3),
+        nullable=True,
+    )
+
+
+class Trackpoint(Base):
+    """One ordered sensor observation selected for a canonical activity."""
+
+    __tablename__ = "trackpoints"
+    __table_args__ = (
+        CheckConstraint(
+            "sequence_number >= 0",
+            name="trackpoints_sequence_number",
+        ),
+        CheckConstraint("elapsed_ms >= 0", name="trackpoints_elapsed"),
+        Index(
+            "ix_trackpoints_activity_recorded",
+            "activity_id",
+            "recorded_at",
+        ),
+    )
+
+    activity_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("activities.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    sequence_number: Mapped[int] = mapped_column(
+        Integer,
+        primary_key=True,
+    )
+    recorded_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+    )
+    elapsed_ms: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    distance_m: Mapped[Decimal | None] = mapped_column(
+        Numeric(14, 3),
+        nullable=True,
+    )
+    latitude: Mapped[Decimal | None] = mapped_column(
+        Numeric(9, 6),
+        nullable=True,
+    )
+    longitude: Mapped[Decimal | None] = mapped_column(
+        Numeric(9, 6),
+        nullable=True,
+    )
+    altitude_m: Mapped[Decimal | None] = mapped_column(
+        Numeric(10, 3),
+        nullable=True,
+    )
+    heart_rate_bpm: Mapped[int | None] = mapped_column(
+        SmallInteger,
+        nullable=True,
+    )
+    cadence_spm: Mapped[Decimal | None] = mapped_column(
+        Numeric(8, 3),
+        nullable=True,
+    )
+    speed_mps: Mapped[Decimal | None] = mapped_column(
+        Numeric(10, 4),
+        nullable=True,
+    )
+    power_watts: Mapped[Decimal | None] = mapped_column(
+        Numeric(10, 3),
+        nullable=True,
+    )
+    temperature_c: Mapped[Decimal | None] = mapped_column(
+        Numeric(6, 2),
+        nullable=True,
+    )
+    is_paused: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        server_default=text("false"),
     )
 
 

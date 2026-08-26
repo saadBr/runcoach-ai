@@ -25,6 +25,7 @@ from runcoach.db.models import (
     ImportBatch,
     ImportFile,
     SourceActivity,
+    SourceActivityFile,
 )
 from runcoach.ingestion.contracts import (
     ActivityKind,
@@ -203,7 +204,10 @@ def test_reconciliation_is_persisted_with_provenance(
     assert source_activity is not None
     assert source_activity.activity_id == activity.id
     assert source_activity.external_activity_id == "100"
-
+    source_file_link = db_session.scalar(select(SourceActivityFile))
+    assert source_file_link is not None
+    assert source_file_link.source_activity_id == source_activity.id
+    assert source_file_link.file_role == "summary"
     assert db_session.scalar(select(func.count()).select_from(ActivityFieldSource)) == 2
 
 
@@ -240,6 +244,7 @@ def test_reimport_is_idempotent(
     assert db_session.scalar(select(func.count()).select_from(SourceActivity)) == 1
     assert db_session.scalar(select(func.count()).select_from(ImportFile)) == 2
     assert db_session.scalar(select(func.count()).select_from(ImportBatch)) == 2
+    assert db_session.scalar(select(func.count()).select_from(SourceActivityFile)) == 1
 
 
 def test_warning_is_persisted_and_updates_batch_status(

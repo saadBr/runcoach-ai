@@ -31,6 +31,9 @@ def test_documented_core_tables_are_registered() -> None:
         "source_activities",
         "activity_field_sources",
         "data_quality_issues",
+        "source_activity_files",
+        "laps",
+        "trackpoints",
     }
 
     assert expected_tables <= set(Base.metadata.tables)
@@ -79,3 +82,24 @@ def test_data_quality_issue_requires_an_identifiable_scope() -> None:
     }
 
     assert "data_quality_issues_scope" in constraint_names
+
+
+def test_source_activity_file_link_is_unique() -> None:
+    link_table = Base.metadata.tables["source_activity_files"]
+    unique_columns = _unique_column_sets(link_table)
+
+    assert frozenset({"source_activity_id", "import_file_id"}) in unique_columns
+
+
+def test_lap_index_is_unique_per_activity() -> None:
+    lap_table = Base.metadata.tables["laps"]
+    unique_columns = _unique_column_sets(lap_table)
+
+    assert frozenset({"activity_id", "lap_index"}) in unique_columns
+
+
+def test_trackpoint_uses_activity_and_sequence_composite_key() -> None:
+    trackpoint_table = Base.metadata.tables["trackpoints"]
+    primary_key_columns = {column.name for column in trackpoint_table.primary_key.columns}
+
+    assert primary_key_columns == {"activity_id", "sequence_number"}

@@ -219,6 +219,24 @@ Constraints:
 - A duplicate source record may point to an existing canonical activity.
 - `raw_metadata` must not contain credentials or unbounded raw sensor payloads.
 
+### `source_activity_files`
+
+Associates one provider activity identity with every file that contributes summary, sensor,
+route, or attachment data.
+
+| Column | Type | Rules |
+|---|---|---|
+| `id` | UUID | Primary key |
+| `source_activity_id` | UUID | Foreign key to `source_activities` |
+| `import_file_id` | UUID | Foreign key to `import_files` |
+| `file_role` | Text | `summary`, `sensor`, `route`, or `attachment` |
+| `created_at` | Timestamptz | Required |
+
+`(source_activity_id, import_file_id)` is unique. The bridge prevents a false one-file-per-
+activity assumption: one provider record may be represented by a bulk-summary row, a FIT or
+GPX sensor file, and later attachments. Raw file bytes remain outside PostgreSQL.
+
+
 ### `activity_field_sources`
 
 Records which provider representation supplied each selected canonical field.
