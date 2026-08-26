@@ -219,6 +219,22 @@ Constraints:
 - A duplicate source record may point to an existing canonical activity.
 - `raw_metadata` must not contain credentials or unbounded raw sensor payloads.
 
+### `activity_field_sources`
+
+Records which provider representation supplied each selected canonical field.
+
+| Column | Type | Rules |
+|---|---|---|
+| `id` | UUID | Primary key |
+| `activity_id` | UUID | Foreign key to `activities` |
+| `field_name` | Text | Stable normalized field name |
+| `source_activity_id` | UUID | Foreign key to `source_activities` |
+| `selection_reason` | Text | Deterministic precedence or fallback rule |
+| `created_at` | Timestamptz | Required |
+
+`(activity_id, field_name)` is unique. This table makes canonical merge decisions
+auditable without copying raw sensor payloads or private source files.
+
 ### `data_quality_issues`
 
 | Column | Type | Rules |

@@ -1,19 +1,22 @@
 """Core persistence models for ingestion and canonical activities."""
 
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
+    CHAR,
     JSON,
-    Boolean,
+    BigInteger,
     CheckConstraint,
+    Date,
     DateTime,
     ForeignKey,
     Index,
     Integer,
     Numeric,
+    SmallInteger,
     String,
     Text,
     UniqueConstraint,
@@ -21,9 +24,12 @@ from sqlalchemy import (
     func,
     text,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from runcoach.db.base import Base
+
+JSON_DOCUMENT = JSON().with_variant(JSONB(), "postgresql")
 
 
 class TimestampMixin:
@@ -57,15 +63,33 @@ class Athlete(TimestampMixin, Base):
 
 
 class ImportBatch(Base):
-    """One auditable execution of the ingestion pipeline."""
+    """One durable and auditable execution of the ingestion pipeline."""
 
     __tablename__ = "import_batches"
     __table_args__ = (
         CheckConstraint(
-            "status IN ('pending', 'running', 'completed', 'failed')",
+            "status IN ('pending', 'processing', 'completed', 'completed_with_warnings', 'failed')",
             name="import_batches_status",
         ),
-        Index("ix_import_batches_athlete_started", "athlete_id", "started_at"),
+        CheckConstraint("retry_count >= 0", name="import_batches_retry_count"),
+        CheckConstraint("total_files >= 0", name="import_batches_total_files"),
+        CheckConstraint(
+            "accepted_files >= 0",
+            name="import_batches_accepted_files",
+        ),
+        CheckConstraint(
+            "rejected_files >= 0",
+            name="import_batches_rejected_files",
+        ),
+        CheckConstraint(
+            "duplicate_files >= 0",
+            name="import_batches_duplicate_files",
+        ),
+        CheckConstraint(
+            "warning_count >= 0",
+            name="import_batches_warning_count",
+        ),
+        Index("ix_import_batches_athlete_requested", "athlete_id", "requested_at"),
     )
 
     id: Mapped[UUID] = mapped_column(
@@ -79,44 +103,77 @@ class ImportBatch(Base):
         nullable=False,
     )
     status: Mapped[str] = mapped_column(
-        String(16),
+        String(32),
         nullable=False,
         server_default=text("'pending'"),
     )
-    parser_version: Mapped[str] = mapped_column(String(64), nullable=False)
-    source_description: Mapped[str | None] = mapped_column(Text, nullable=True)
-    started_at: Mapped[datetime] = mapped_column(
+    requested_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
         server_default=func.now(),
+    )
+    started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
     )
     completed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
         nullable=True,
     )
+    lease_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    retry_count: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        server_default=text("0"),
+    )
+    parser_bundle_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    total_files: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        server_default=text("0"),
+    )
+    accepted_files: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        server_default=text("0"),
+    )
+    rejected_files: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        server_default=text("0"),
+    )
+    duplicate_files: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        server_default=text("0"),
+    )
+    warning_count: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        server_default=text("0"),
+    )
+    sanitized_error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
-class SourceFile(Base):
-    """A content-addressed source file discovered during an import."""
+class ImportFile(Base):
+    """File identity and processing metadata without storing file bytes."""
 
-    __tablename__ = "source_files"
+    __tablename__ = "import_files"
     __table_args__ = (
         CheckConstraint(
-            "provider IN ('garmin', 'strava')",
-            name="source_files_provider",
+            "source_provider IN ('garmin', 'strava', 'unknown')",
+            name="import_files_source_provider",
         ),
         CheckConstraint(
-            "parse_status IN ('pending', 'parsed', 'rejected', 'failed')",
-            name="source_files_parse_status",
+            "status IN ('pending', 'accepted', 'rejected', 'duplicate', 'failed', 'deleted')",
+            name="import_files_status",
         ),
-        CheckConstraint("size_bytes >= 0", name="source_files_size"),
-        UniqueConstraint(
-            "athlete_id",
-            "provider",
-            "content_sha256",
-            name="uq_source_files_athlete_provider_hash",
-        ),
-        Index("ix_source_files_import_batch", "import_batch_id"),
+        CheckConstraint("size_bytes >= 0", name="import_files_size"),
+        Index("ix_import_files_batch", "import_batch_id"),
+        Index("ix_import_files_sha256", "sha256"),
     )
 
     id: Mapped[UUID] = mapped_column(
@@ -124,61 +181,57 @@ class SourceFile(Base):
         primary_key=True,
         default=uuid4,
     )
-    athlete_id: Mapped[UUID] = mapped_column(
-        Uuid(as_uuid=True),
-        ForeignKey("athletes.id", ondelete="RESTRICT"),
-        nullable=False,
-    )
     import_batch_id: Mapped[UUID] = mapped_column(
         Uuid(as_uuid=True),
-        ForeignKey("import_batches.id", ondelete="RESTRICT"),
+        ForeignKey("import_batches.id", ondelete="CASCADE"),
         nullable=False,
     )
-    provider: Mapped[str] = mapped_column(String(16), nullable=False)
-    source_format: Mapped[str] = mapped_column(String(16), nullable=False)
     original_name: Mapped[str] = mapped_column(Text, nullable=False)
-    content_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
-    size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
-    parse_status: Mapped[str] = mapped_column(
+    source_provider: Mapped[str] = mapped_column(String(16), nullable=False)
+    media_type: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    sha256: Mapped[str] = mapped_column(CHAR(64), nullable=False)
+    storage_key: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(
         String(16),
         nullable=False,
         server_default=text("'pending'"),
     )
-    discovered_at: Mapped[datetime] = mapped_column(
+    detected_format: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    parser_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    parser_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    processed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
-        nullable=False,
-        server_default=func.now(),
+        nullable=True,
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
     )
 
 
 class Activity(TimestampMixin, Base):
-    """A canonical activity reconciled from one or more source records."""
+    """A canonical athlete activity resolved from provider records."""
 
     __tablename__ = "activities"
     __table_args__ = (
         CheckConstraint(
-            "activity_kind IN ('running', 'trail_running', 'treadmill_running', 'other')",
-            name="activities_kind",
+            "activity_type IN ('race', 'workout', 'easy', 'long', 'unknown', 'other')",
+            name="activities_type",
         ),
+        CheckConstraint("distance_m >= 0", name="activities_distance"),
+        CheckConstraint("moving_time_ms >= 0", name="activities_moving_time"),
+        CheckConstraint("elapsed_time_ms >= 0", name="activities_elapsed_time"),
         CheckConstraint(
-            "distance_m IS NULL OR distance_m >= 0",
-            name="activities_distance",
+            "verification_status IN ('unverified', 'verified', 'excluded')",
+            name="activities_verification_status",
         ),
-        CheckConstraint(
-            "elapsed_time_s IS NULL OR elapsed_time_s >= 0",
-            name="activities_elapsed_time",
-        ),
-        CheckConstraint(
-            "moving_time_s IS NULL OR moving_time_s >= 0",
-            name="activities_moving_time",
-        ),
-        UniqueConstraint(
+        Index(
+            "ix_activities_duplicate_candidates",
             "athlete_id",
-            "canonical_key",
-            name="uq_activities_athlete_canonical_key",
+            "sport",
+            "start_time_utc",
         ),
-        Index("ix_activities_athlete_started", "athlete_id", "started_at"),
-        Index("ix_activities_athlete_kind", "athlete_id", "activity_kind"),
     )
 
     id: Mapped[UUID] = mapped_column(
@@ -191,57 +244,35 @@ class Activity(TimestampMixin, Base):
         ForeignKey("athletes.id", ondelete="RESTRICT"),
         nullable=False,
     )
-    canonical_key: Mapped[str] = mapped_column(String(64), nullable=False)
-    activity_kind: Mapped[str] = mapped_column(String(32), nullable=False)
-    title: Mapped[str | None] = mapped_column(Text, nullable=True)
-    started_at: Mapped[datetime] = mapped_column(
+    sport: Mapped[str] = mapped_column(String(32), nullable=False)
+    activity_type: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        server_default=text("'unknown'"),
+    )
+    name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    start_time_utc: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
     )
-    timezone: Mapped[str | None] = mapped_column(String(64), nullable=True)
-
-    elapsed_time_s: Mapped[Decimal | None] = mapped_column(
+    original_timezone: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    local_start_date: Mapped[date] = mapped_column(Date, nullable=False)
+    distance_m: Mapped[Decimal] = mapped_column(
         Numeric(12, 3),
-        nullable=True,
+        nullable=False,
     )
-    moving_time_s: Mapped[Decimal | None] = mapped_column(
-        Numeric(12, 3),
-        nullable=True,
-    )
-    distance_m: Mapped[Decimal | None] = mapped_column(
-        Numeric(14, 3),
-        nullable=True,
-    )
+    moving_time_ms: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    elapsed_time_ms: Mapped[int] = mapped_column(BigInteger, nullable=False)
     elevation_gain_m: Mapped[Decimal | None] = mapped_column(
         Numeric(10, 3),
         nullable=True,
     )
-    elevation_loss_m: Mapped[Decimal | None] = mapped_column(
-        Numeric(10, 3),
+    average_hr_bpm: Mapped[Decimal | None] = mapped_column(
+        Numeric(6, 2),
         nullable=True,
     )
-    average_speed_mps: Mapped[Decimal | None] = mapped_column(
-        Numeric(10, 4),
-        nullable=True,
-    )
-    maximum_speed_mps: Mapped[Decimal | None] = mapped_column(
-        Numeric(10, 4),
-        nullable=True,
-    )
-
-    average_heart_rate_bpm: Mapped[int | None] = mapped_column(
-        Integer,
-        nullable=True,
-    )
-    maximum_heart_rate_bpm: Mapped[int | None] = mapped_column(
-        Integer,
-        nullable=True,
-    )
+    max_hr_bpm: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
     average_cadence_spm: Mapped[Decimal | None] = mapped_column(
-        Numeric(8, 3),
-        nullable=True,
-    )
-    maximum_cadence_spm: Mapped[Decimal | None] = mapped_column(
         Numeric(8, 3),
         nullable=True,
     )
@@ -249,49 +280,52 @@ class Activity(TimestampMixin, Base):
         Numeric(10, 3),
         nullable=True,
     )
-    provider_vo2max: Mapped[Decimal | None] = mapped_column(
-        Numeric(6, 2),
+    canonical_sensor_source_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey(
+            "source_activities.id",
+            name="fk_activities_canonical_sensor_source_id_source_activities",
+            ondelete="SET NULL",
+            use_alter=True,
+        ),
         nullable=True,
     )
-    provider_aerobic_training_effect: Mapped[Decimal | None] = mapped_column(
-        Numeric(5, 2),
-        nullable=True,
-    )
-    provider_anaerobic_training_effect: Mapped[Decimal | None] = mapped_column(
-        Numeric(5, 2),
-        nullable=True,
-    )
-    provider_training_effect_label: Mapped[str | None] = mapped_column(
-        String(64),
-        nullable=True,
-    )
-    has_gps: Mapped[bool] = mapped_column(
-        Boolean,
+    verification_status: Mapped[str] = mapped_column(
+        String(16),
         nullable=False,
-        server_default=text("false"),
+        server_default=text("'unverified'"),
     )
 
 
-class ActivitySource(Base):
-    """A source record that contributed to a canonical activity."""
+class SourceActivity(Base):
+    """A provider-specific activity record used for canonical resolution."""
 
-    __tablename__ = "activity_sources"
+    __tablename__ = "source_activities"
     __table_args__ = (
         CheckConstraint(
-            "provider IN ('garmin', 'strava')",
-            name="activity_sources_provider",
+            "provider IN ('garmin', 'strava', 'unknown')",
+            name="source_activities_provider",
+        ),
+        CheckConstraint(
+            "source_distance_m IS NULL OR source_distance_m >= 0",
+            name="source_activities_distance",
+        ),
+        CheckConstraint(
+            "source_duration_ms IS NULL OR source_duration_ms >= 0",
+            name="source_activities_duration",
+        ),
+        CheckConstraint(
+            "resolution_status IN ('unresolved', 'canonical', 'duplicate', 'review')",
+            name="source_activities_resolution_status",
         ),
         UniqueConstraint(
-            "source_file_id",
-            "source_record_key",
-            name="uq_activity_sources_file_record",
-        ),
-        Index("ix_activity_sources_activity", "activity_id"),
-        Index(
-            "ix_activity_sources_provider_external",
             "provider",
             "external_activity_id",
+            name="uq_source_activities_provider_external",
         ),
+        Index("ix_source_activities_import_file", "import_file_id"),
+        Index("ix_source_activities_activity", "activity_id"),
+        Index("ix_source_activities_dedupe", "dedupe_fingerprint"),
     )
 
     id: Mapped[UUID] = mapped_column(
@@ -299,35 +333,45 @@ class ActivitySource(Base):
         primary_key=True,
         default=uuid4,
     )
-    activity_id: Mapped[UUID] = mapped_column(
+    import_file_id: Mapped[UUID] = mapped_column(
         Uuid(as_uuid=True),
-        ForeignKey("activities.id", ondelete="CASCADE"),
+        ForeignKey("import_files.id", ondelete="CASCADE"),
         nullable=False,
     )
-    source_file_id: Mapped[UUID] = mapped_column(
+    activity_id: Mapped[UUID | None] = mapped_column(
         Uuid(as_uuid=True),
-        ForeignKey("source_files.id", ondelete="RESTRICT"),
-        nullable=False,
+        ForeignKey("activities.id", ondelete="SET NULL"),
+        nullable=True,
     )
     provider: Mapped[str] = mapped_column(String(16), nullable=False)
-    source_format: Mapped[str] = mapped_column(String(16), nullable=False)
-    source_record_key: Mapped[str] = mapped_column(String(128), nullable=False)
     external_activity_id: Mapped[str | None] = mapped_column(
         String(128),
         nullable=True,
     )
-    source_started_at: Mapped[datetime | None] = mapped_column(
+    source_start_time: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
         nullable=True,
     )
-    matched_by: Mapped[str] = mapped_column(String(64), nullable=False)
-    is_primary: Mapped[bool] = mapped_column(
-        Boolean,
-        nullable=False,
-        server_default=text("false"),
+    source_sport: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    source_distance_m: Mapped[Decimal | None] = mapped_column(
+        Numeric(12, 3),
+        nullable=True,
     )
-    source_metadata: Mapped[dict[str, Any]] = mapped_column(
-        JSON,
+    source_duration_ms: Mapped[int | None] = mapped_column(
+        BigInteger,
+        nullable=True,
+    )
+    dedupe_fingerprint: Mapped[str | None] = mapped_column(
+        CHAR(64),
+        nullable=True,
+    )
+    resolution_status: Mapped[str] = mapped_column(
+        String(16),
+        nullable=False,
+        server_default=text("'unresolved'"),
+    )
+    raw_metadata: Mapped[dict[str, Any]] = mapped_column(
+        JSON_DOCUMENT,
         nullable=False,
         default=dict,
     )
@@ -348,7 +392,7 @@ class ActivityFieldSource(Base):
             "field_name",
             name="uq_activity_field_sources_activity_field",
         ),
-        Index("ix_activity_field_sources_source", "activity_source_id"),
+        Index("ix_activity_field_sources_source", "source_activity_id"),
     )
 
     id: Mapped[UUID] = mapped_column(
@@ -362,9 +406,9 @@ class ActivityFieldSource(Base):
         nullable=False,
     )
     field_name: Mapped[str] = mapped_column(String(64), nullable=False)
-    activity_source_id: Mapped[UUID] = mapped_column(
+    source_activity_id: Mapped[UUID] = mapped_column(
         Uuid(as_uuid=True),
-        ForeignKey("activity_sources.id", ondelete="CASCADE"),
+        ForeignKey("source_activities.id", ondelete="CASCADE"),
         nullable=False,
     )
     selection_reason: Mapped[str] = mapped_column(String(128), nullable=False)
@@ -375,17 +419,28 @@ class ActivityFieldSource(Base):
     )
 
 
-class ValidationFinding(Base):
-    """A structured warning or error produced during ingestion."""
+class DataQualityIssue(Base):
+    """A structured, reviewable data-quality finding."""
 
-    __tablename__ = "validation_findings"
+    __tablename__ = "data_quality_issues"
     __table_args__ = (
         CheckConstraint(
-            "severity IN ('info', 'warning', 'error')",
-            name="validation_findings_severity",
+            "severity IN ('info', 'warning', 'error', 'blocking')",
+            name="data_quality_issues_severity",
         ),
-        Index("ix_validation_findings_batch", "import_batch_id"),
-        Index("ix_validation_findings_activity", "activity_id"),
+        CheckConstraint(
+            "resolution_status IN ('open', 'accepted', 'corrected', 'dismissed')",
+            name="data_quality_issues_resolution_status",
+        ),
+        CheckConstraint(
+            "import_batch_id IS NOT NULL "
+            "OR source_activity_id IS NOT NULL "
+            "OR activity_id IS NOT NULL",
+            name="data_quality_issues_scope",
+        ),
+        Index("ix_data_quality_issues_batch", "import_batch_id"),
+        Index("ix_data_quality_issues_source", "source_activity_id"),
+        Index("ix_data_quality_issues_activity", "activity_id"),
     )
 
     id: Mapped[UUID] = mapped_column(
@@ -393,14 +448,14 @@ class ValidationFinding(Base):
         primary_key=True,
         default=uuid4,
     )
-    import_batch_id: Mapped[UUID] = mapped_column(
+    import_batch_id: Mapped[UUID | None] = mapped_column(
         Uuid(as_uuid=True),
         ForeignKey("import_batches.id", ondelete="CASCADE"),
-        nullable=False,
+        nullable=True,
     )
-    source_file_id: Mapped[UUID | None] = mapped_column(
+    source_activity_id: Mapped[UUID | None] = mapped_column(
         Uuid(as_uuid=True),
-        ForeignKey("source_files.id", ondelete="SET NULL"),
+        ForeignKey("source_activities.id", ondelete="SET NULL"),
         nullable=True,
     )
     activity_id: Mapped[UUID | None] = mapped_column(
@@ -408,17 +463,25 @@ class ValidationFinding(Base):
         ForeignKey("activities.id", ondelete="SET NULL"),
         nullable=True,
     )
-    severity: Mapped[str] = mapped_column(String(16), nullable=False)
     code: Mapped[str] = mapped_column(String(64), nullable=False)
-    message: Mapped[str] = mapped_column(Text, nullable=False)
+    severity: Mapped[str] = mapped_column(String(16), nullable=False)
     field_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    details: Mapped[dict[str, Any]] = mapped_column(
-        JSON,
+    message: Mapped[str] = mapped_column(Text, nullable=False)
+    observed_value: Mapped[Any | None] = mapped_column(
+        JSON_DOCUMENT,
+        nullable=True,
+    )
+    resolution_status: Mapped[str] = mapped_column(
+        String(16),
         nullable=False,
-        default=dict,
+        server_default=text("'open'"),
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
         server_default=func.now(),
+    )
+    resolved_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
     )
