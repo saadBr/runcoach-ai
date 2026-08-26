@@ -3,6 +3,7 @@
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
+from uuid import UUID
 
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -25,6 +26,7 @@ class Settings(BaseSettings):
     api_port: int = Field(default=8000, ge=1, le=65535)
     database_url: str = "postgresql+psycopg://runcoach:runcoach-local@localhost:5432/runcoach"
     private_data_dir: Path = Path("data/private")
+    athlete_id: UUID | None = None
     llm_provider: Literal["disabled", "openai"] = "disabled"
     openai_model: str | None = None
     openai_api_key: SecretStr | None = Field(

@@ -95,7 +95,17 @@ docker compose up --build -d
 Invoke-RestMethod 'http://localhost:8000/health/ready'
 
 ```
+## Private summary import
 
+Set `RUNCOACH_ATHLETE_ID` in the ignored `.env` file to one stable UUID, apply the database
+migration, and run:
+
+```powershell
+uv run alembic upgrade head
+uv run python -m runcoach.cli.import_summaries `
+  --timezone 'Africa/Casablanca' `
+  --strava-csv 'data\private\strava\extracted\activities.csv' `
+  --garmin-json 'data\private\garmin\extracted\path\to\summarizedActivities.json'
 ## Documentation
 
 - [Problem statement](docs/problem-statement.md)

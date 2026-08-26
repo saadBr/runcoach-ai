@@ -377,3 +377,24 @@ The ingestion milestone is accepted when it can:
 8. Remain idempotent when the same exports are imported again.
 9. Record source provenance and validation findings.
 10. Exclude non-running activities from running analytics.
+
+## Persistence validation
+
+The reconciled summary dataset was persisted to local PostgreSQL on 2026-08-26.
+
+| Measure | Result |
+|---|---:|
+| Canonical running activities | 130 |
+| Total canonical distance | 1,376.08 km |
+| Earliest activity date | 2024-05-21 |
+| Latest activity date | 2026-08-23 |
+| Strava source representations | 130 |
+| Garmin source representations | 85 |
+| Resolved source representations | 215 |
+| Data-quality findings | 0 |
+
+A second import of the same files accepted zero new files, classified both files as
+duplicates, reused all 130 canonical activities, and created zero activities or source
+representations. This verifies file-level and activity-level idempotency for the inspected
+exports. It does not establish completeness beyond those exports or validate physiological
+interpretation.
