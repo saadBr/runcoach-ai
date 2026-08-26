@@ -159,6 +159,12 @@ class NormalizedActivity(ContractModel):
     maximum_cadence_spm: Cadence | None = None
     calories_kcal: NonNegativeFloat | None = None
     steps: Annotated[int, Field(ge=0)] | None = None
+    provider_vo2max: NonNegativeFloat | None = None
+    provider_aerobic_training_effect: NonNegativeFloat | None = None
+    provider_anaerobic_training_effect: NonNegativeFloat | None = None
+    provider_training_effect_label: Annotated[str, Field(min_length=1, max_length=255)] | None = (
+        None
+    )
     laps: tuple[NormalizedLap, ...] = ()
     trackpoints: tuple[NormalizedTrackpoint, ...] = ()
 
