@@ -357,6 +357,41 @@ def test_strava_fit_detail_is_persisted(
     )
 
 
+def test_missing_trackpoint_elapsed_time_is_derived_from_timestamp(
+    db_session: Session,
+) -> None:
+    _seed_summary_data(db_session)
+    raw_input = _raw_input(
+        provider=SourceProvider.STRAVA,
+        source_format=SourceFormat.FIT_GZ,
+        content_sha256=STRAVA_RAW_HASH,
+        external_activity_id="strava-100",
+        trackpoint_count=1,
+    )
+
+    trackpoint = raw_input.activity.trackpoints[0].model_copy(
+        update={
+            "timestamp_utc": START_TIME + timedelta(seconds=15),
+            "elapsed_time_s": None,
+        }
+    )
+    adjusted_activity = raw_input.activity.model_copy(update={"trackpoints": (trackpoint,)})
+
+    summary = _persist(
+        db_session,
+        SensorActivityInput(
+            file=raw_input.file,
+            activity=adjusted_activity,
+        ),
+    )
+
+    assert summary.trackpoints_written == 1
+
+    stored_trackpoint = db_session.scalar(select(Trackpoint))
+    assert stored_trackpoint is not None
+    assert stored_trackpoint.elapsed_ms == 15_000
+
+
 def test_garmin_fit_is_preferred_over_strava_fit(
     db_session: Session,
 ) -> None:
@@ -434,6 +469,36 @@ def test_raw_sensor_reimport_is_idempotent(
         )
         == 1
     )
+
+
+def test_metric_match_allows_small_provider_duration_difference(
+    db_session: Session,
+) -> None:
+    _seed_summary_data(db_session)
+    raw_input = _raw_input(
+        provider=SourceProvider.GARMIN,
+        source_format=SourceFormat.FIT,
+        content_sha256=GARMIN_RAW_HASH,
+        external_activity_id=None,
+    )
+    adjusted_activity = raw_input.activity.model_copy(
+        update={
+            "elapsed_time_s": 2_539.0,
+            "distance_m": 10_011.0,
+        }
+    )
+
+    summary = _persist(
+        db_session,
+        SensorActivityInput(
+            file=raw_input.file,
+            activity=adjusted_activity,
+        ),
+    )
+
+    assert summary.matched_files == 1
+    assert summary.unmatched_files == 0
+    assert summary.activities_enriched == 1
 
 
 def test_unmatched_raw_activity_creates_warning(

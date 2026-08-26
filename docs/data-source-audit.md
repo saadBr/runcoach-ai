@@ -398,3 +398,38 @@ duplicates, reused all 130 canonical activities, and created zero activities or 
 representations. This verifies file-level and activity-level idempotency for the inspected
 exports. It does not establish completeness beyond those exports or validate physiological
 interpretation.
+
+## Sensor-detail persistence validation
+
+Raw sensor enrichment was validated against local PostgreSQL on 2026-08-26.
+
+| Measure                     |  Result |
+| --------------------------- | ------: |
+| Sensor-enriched activities  |     129 |
+| Summary-only activities     |       1 |
+| Garmin-selected activities  |      84 |
+| Strava-selected activities  |      45 |
+| Persisted laps              |   1,046 |
+| Persisted trackpoints       | 221,350 |
+| Trackpoints with heart rate |  79,761 |
+| Trackpoints with position   | 212,553 |
+| Trackpoints with altitude   | 212,656 |
+| Trackpoints with cadence    |  79,761 |
+
+All 129 referenced Strava running files were found, parsed, and matched without ambiguity.
+The Garmin scan inspected 3,028 FIT files, retained 84 running activities, ignored 2,944
+monitoring or non-running files, and produced no FIT decoding failures.
+
+Canonical selection prefers Garmin FIT for overlapping recent runs and retains Strava for
+historical runs and fallback coverage. One historical activity remains summary-only.
+
+One Garmin activity initially exceeded the fixed 30-second duration tolerance despite an exact
+start-time match and a distance difference of only 0.15 percent. The corrected strong-match
+rule requires:
+
+- Start-time difference no greater than 2 seconds.
+- Distance difference no greater than the larger of 50 metres or 0.5 percent.
+- Duration difference no greater than the larger of 60 seconds or 2 percent.
+
+A regression test protects this rule. Reprocessing matched the activity uniquely, and the
+original data-quality finding was marked corrected with its canonical and source references.

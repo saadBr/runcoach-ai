@@ -174,7 +174,11 @@ def _is_compatible(
     if raw_duration_ms is None:
         return False
 
-    if abs(raw_duration_ms - canonical_activity.elapsed_time_ms) > 30_000:
+    duration_tolerance_ms: int = max(
+        60_000,
+        round(canonical_activity.elapsed_time_ms * 0.02),
+    )
+    if abs(raw_duration_ms - canonical_activity.elapsed_time_ms) > duration_tolerance_ms:
         return False
 
     if raw_activity.distance_m is None:
@@ -637,10 +641,18 @@ class SensorPersistenceService:
 
         trackpoint_rows: list[dict[str, Any]] = []
         for trackpoint in normalized.trackpoints:
-            elapsed_ms = _milliseconds(trackpoint.elapsed_time_s)
-            if elapsed_ms is None:
-                raise SensorPersistenceError("A normalized trackpoint is missing elapsed time.")
+            elapsed_time_s = trackpoint.elapsed_time_s
+            if elapsed_time_s is None:
+                elapsed_time_s = max(
+                    0.0,
+                    (
+                        _as_utc(trackpoint.timestamp_utc) - _as_utc(normalized.start_time_utc)
+                    ).total_seconds(),
+                )
 
+            elapsed_ms = _milliseconds(elapsed_time_s)
+            if elapsed_ms is None:
+                raise SensorPersistenceError("Trackpoint elapsed time could not be derived.")
             trackpoint_rows.append(
                 {
                     "activity_id": canonical_activity.id,

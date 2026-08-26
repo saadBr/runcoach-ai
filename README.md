@@ -95,17 +95,38 @@ docker compose up --build -d
 Invoke-RestMethod 'http://localhost:8000/health/ready'
 
 ```
-## Private summary import
+## Private data import
 
-Set `RUNCOACH_ATHLETE_ID` in the ignored `.env` file to one stable UUID, apply the database
-migration, and run:
+Set `RUNCOACH_ATHLETE_ID` in the ignored `.env` file and apply the database migrations:
 
 ```powershell
 uv run alembic upgrade head
+```
+
+Import and reconcile activity summaries:
+
+```powershell
 uv run python -m runcoach.cli.import_summaries `
   --timezone 'Africa/Casablanca' `
   --strava-csv 'data\private\strava\extracted\activities.csv' `
   --garmin-json 'data\private\garmin\extracted\path\to\summarizedActivities.json'
+```
+
+Import raw Strava and Garmin activity detail:
+
+```powershell
+uv run python -m runcoach.cli.import_sensors `
+  --strava-root 'data\private\strava\extracted'
+
+uv run python -m runcoach.cli.import_sensors `
+  --garmin-root 'data\private\garmin\extracted' `
+  --progress-every 500
+```
+
+Raw imports use checksums and source identifiers for idempotence. Garmin FIT is preferred for
+recent overlapping runs, while Strava FIT, FIT.GZ, and GPX files provide historical coverage
+and fallback data. Raw files and GPS coordinates remain in ignored local storage and the
+private PostgreSQL database.
 ## Documentation
 
 - [Problem statement](docs/problem-statement.md)
