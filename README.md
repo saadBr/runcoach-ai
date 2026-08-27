@@ -205,6 +205,39 @@ with adequate heart-rate coverage.
 
 See [Deterministic analytics methodology](docs/analytics-methodology.md).
 
+## Analytics API
+
+The read-only analytics API exposes persisted deterministic results:
+
+```text
+GET /api/v1/analytics/overview
+```
+
+Omitting `as_of_date` returns the latest calculated workload snapshot. An exact historical
+snapshot can be requested with:
+
+```text
+GET /api/v1/analytics/overview?as_of_date=2026-08-27
+```
+
+Example PowerShell request:
+
+```powershell
+Invoke-RestMethod 'http://localhost:8000/api/v1/analytics/overview' |
+  ConvertTo-Json -Depth 8
+```
+
+The response includes:
+
+- Full-history run count, distance, and moving time
+- Seven-day and 28-day training summaries
+- Aggregate heart-rate, GPS, and cadence coverage
+- Latest daily, acute, chronic, fitness, fatigue, and form values
+- Calculation method and algorithm versions
+
+The endpoint does not expose the athlete UUID, source identifiers, filenames, or raw route
+coordinates.
+
 ## Quality checks
 
 Run the complete local verification suite:

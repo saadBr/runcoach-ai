@@ -29,6 +29,7 @@ services:
       RUNCOACH_DATABASE_URL: postgresql+psycopg://runcoach:runcoach-local@db:5432/runcoach
       RUNCOACH_PRIVATE_DATA_DIR: /app/data/private
       RUNCOACH_LLM_PROVIDER: disabled
+      RUNCOACH_ATHLETE_ID: ${RUNCOACH_ATHLETE_ID:-}
     ports:
       - "8000:8000"
     volumes:
