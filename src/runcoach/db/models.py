@@ -671,3 +671,268 @@ class DataQualityIssue(Base):
         DateTime(timezone=True),
         nullable=True,
     )
+
+
+class PhysiologyProfile(Base):
+    """Time-valid athlete physiology inputs used by deterministic metrics."""
+
+    __tablename__ = "physiology_profiles"
+    __table_args__ = (
+        CheckConstraint(
+            "valid_to IS NULL OR valid_to > valid_from",
+            name="physiology_profiles_valid_period",
+        ),
+        CheckConstraint(
+            "observed_max_hr_bpm IS NULL OR observed_max_hr_bpm BETWEEN 100 AND 250",
+            name="physiology_profiles_max_hr",
+        ),
+        CheckConstraint(
+            "resting_hr_bpm IS NULL OR resting_hr_bpm BETWEEN 25 AND 120",
+            name="physiology_profiles_resting_hr",
+        ),
+        CheckConstraint(
+            "lactate_threshold_hr_bpm IS NULL OR lactate_threshold_hr_bpm BETWEEN 80 AND 230",
+            name="physiology_profiles_threshold_hr",
+        ),
+        CheckConstraint(
+            "threshold_pace_seconds_per_km IS NULL OR threshold_pace_seconds_per_km > 0",
+            name="physiology_profiles_threshold_pace",
+        ),
+        UniqueConstraint(
+            "athlete_id",
+            "valid_from",
+            name="uq_physiology_profiles_athlete_valid_from",
+        ),
+        Index(
+            "ix_physiology_profiles_athlete_period",
+            "athlete_id",
+            "valid_from",
+            "valid_to",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        primary_key=True,
+        default=uuid4,
+    )
+    athlete_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("athletes.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    valid_from: Mapped[date] = mapped_column(Date, nullable=False)
+    valid_to: Mapped[date | None] = mapped_column(Date, nullable=True)
+    observed_max_hr_bpm: Mapped[int | None] = mapped_column(
+        SmallInteger,
+        nullable=True,
+    )
+    resting_hr_bpm: Mapped[int | None] = mapped_column(
+        SmallInteger,
+        nullable=True,
+    )
+    lactate_threshold_hr_bpm: Mapped[int | None] = mapped_column(
+        SmallInteger,
+        nullable=True,
+    )
+    threshold_pace_seconds_per_km: Mapped[int | None] = mapped_column(
+        Integer,
+        nullable=True,
+    )
+    zone_method: Mapped[str] = mapped_column(String(64), nullable=False)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+
+class ActivityMetric(Base):
+    """One versioned deterministic metric result for an activity."""
+
+    __tablename__ = "activity_metrics"
+    __table_args__ = (
+        CheckConstraint(
+            "heart_rate_coverage_pct BETWEEN 0 AND 100",
+            name="activity_metrics_hr_coverage",
+        ),
+        CheckConstraint(
+            "gps_coverage_pct BETWEEN 0 AND 100",
+            name="activity_metrics_gps_coverage",
+        ),
+        CheckConstraint(
+            "cadence_coverage_pct BETWEEN 0 AND 100",
+            name="activity_metrics_cadence_coverage",
+        ),
+        CheckConstraint(
+            "training_load IS NULL OR training_load >= 0",
+            name="activity_metrics_training_load",
+        ),
+        CheckConstraint(
+            "length(input_hash) = 64",
+            name="activity_metrics_input_hash",
+        ),
+        UniqueConstraint(
+            "activity_id",
+            "algorithm_version",
+            "input_hash",
+            name="uq_activity_metrics_activity_version_input",
+        ),
+        Index(
+            "ix_activity_metrics_activity_calculated",
+            "activity_id",
+            "calculated_at",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        primary_key=True,
+        default=uuid4,
+    )
+    activity_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("activities.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    algorithm_version: Mapped[str] = mapped_column(
+        String(64),
+        nullable=False,
+    )
+    profile_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("physiology_profiles.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    calculated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    input_hash: Mapped[str] = mapped_column(CHAR(64), nullable=False)
+    average_pace_seconds_per_km: Mapped[Decimal | None] = mapped_column(
+        Numeric(10, 3),
+        nullable=True,
+    )
+    heart_rate_coverage_pct: Mapped[Decimal] = mapped_column(
+        Numeric(6, 3),
+        nullable=False,
+    )
+    gps_coverage_pct: Mapped[Decimal] = mapped_column(
+        Numeric(6, 3),
+        nullable=False,
+    )
+    cadence_coverage_pct: Mapped[Decimal] = mapped_column(
+        Numeric(6, 3),
+        nullable=False,
+    )
+    load_method: Mapped[str] = mapped_column(String(64), nullable=False)
+    training_load: Mapped[Decimal | None] = mapped_column(
+        Numeric(12, 4),
+        nullable=True,
+    )
+    zone_distribution: Mapped[dict[str, Any]] = mapped_column(
+        JSON_DOCUMENT,
+        nullable=False,
+        default=dict,
+    )
+    additional_metrics: Mapped[dict[str, Any]] = mapped_column(
+        JSON_DOCUMENT,
+        nullable=False,
+        default=dict,
+    )
+
+
+class DailyLoad(Base):
+    """One versioned daily workload and fitness-fatigue state."""
+
+    __tablename__ = "daily_loads"
+    __table_args__ = (
+        CheckConstraint(
+            "daily_load >= 0",
+            name="daily_loads_daily_load",
+        ),
+        CheckConstraint(
+            "acute_load IS NULL OR acute_load >= 0",
+            name="daily_loads_acute_load",
+        ),
+        CheckConstraint(
+            "chronic_load IS NULL OR chronic_load >= 0",
+            name="daily_loads_chronic_load",
+        ),
+        CheckConstraint(
+            "fitness_index IS NULL OR fitness_index >= 0",
+            name="daily_loads_fitness_index",
+        ),
+        CheckConstraint(
+            "fatigue_index IS NULL OR fatigue_index >= 0",
+            name="daily_loads_fatigue_index",
+        ),
+        CheckConstraint(
+            "coverage_pct BETWEEN 0 AND 100",
+            name="daily_loads_coverage",
+        ),
+        UniqueConstraint(
+            "athlete_id",
+            "local_date",
+            "load_method",
+            "algorithm_version",
+            name="uq_daily_loads_athlete_date_method_version",
+        ),
+        Index(
+            "ix_daily_loads_athlete_date",
+            "athlete_id",
+            "local_date",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        primary_key=True,
+        default=uuid4,
+    )
+    athlete_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("athletes.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    local_date: Mapped[date] = mapped_column(Date, nullable=False)
+    load_method: Mapped[str] = mapped_column(String(64), nullable=False)
+    algorithm_version: Mapped[str] = mapped_column(
+        String(64),
+        nullable=False,
+    )
+    daily_load: Mapped[Decimal] = mapped_column(
+        Numeric(12, 4),
+        nullable=False,
+    )
+    acute_load: Mapped[Decimal | None] = mapped_column(
+        Numeric(12, 4),
+        nullable=True,
+    )
+    chronic_load: Mapped[Decimal | None] = mapped_column(
+        Numeric(12, 4),
+        nullable=True,
+    )
+    fitness_index: Mapped[Decimal | None] = mapped_column(
+        Numeric(12, 4),
+        nullable=True,
+    )
+    fatigue_index: Mapped[Decimal | None] = mapped_column(
+        Numeric(12, 4),
+        nullable=True,
+    )
+    form_index: Mapped[Decimal | None] = mapped_column(
+        Numeric(12, 4),
+        nullable=True,
+    )
+    coverage_pct: Mapped[Decimal] = mapped_column(
+        Numeric(6, 3),
+        nullable=False,
+    )
+    calculated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )

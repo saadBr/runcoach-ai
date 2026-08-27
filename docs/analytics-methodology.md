@@ -1,0 +1,383 @@
+# Deterministic Analytics Methodology
+
+## Purpose
+
+This document defines the deterministic calculations used to transform canonical running
+activities and sensor observations into reproducible performance and workload indicators.
+
+These calculations are implemented in normal Python code. They do not depend on an LLM,
+agent, user interface, or external coaching provider.
+
+The language-model layer may later interpret these validated results, but it must not
+recalculate or silently alter them.
+
+## Scientific boundaries
+
+The analytics layer produces modeled indicators rather than direct physiological
+measurements.
+
+In particular:
+
+- Training load is an analytical proxy.
+- Fitness, fatigue, and form are modeled state variables.
+- Heart-rate zones depend on an observed maximum heart rate.
+- Edwards TRIMP is an intensity-weighted summary, not a medical measure.
+- Positive form does not guarantee race readiness.
+- Negative form does not diagnose overtraining or injury.
+- Missing sensor data is represented explicitly rather than imputed as normal physiology.
+
+## Versioning
+
+The initial deterministic calculation versions are:
+
+| Calculation | Version |
+|---|---|
+| Per-activity metrics | `activity_metrics_v1` |
+| Duration workload method | `duration_minutes_v1` |
+| Heart-rate zone method | `max_hr_5_zone_v1` |
+| Daily workload state | `daily_load_v1` |
+
+Changing a formula, threshold, sample-handling rule, or semantic interpretation requires a
+new version identifier.
+
+Existing historical results remain stored so that calculations can be audited and compared.
+
+## Input data
+
+### Canonical activity inputs
+
+Each activity calculation uses:
+
+- Canonical distance in meters
+- Moving time in milliseconds
+- Elapsed time in milliseconds
+- Local activity date
+- Ordered sensor samples, when available
+- The physiology profile valid on the local activity date
+
+Activities marked `excluded` are not included.
+
+### Sensor inputs
+
+The deterministic analytics contract receives only the fields needed for calculation:
+
+- Elapsed time
+- Heart rate
+- Whether position is available
+- Cadence
+- Paused status
+
+Raw latitude and longitude values are not passed into the analytics calculation or its input
+hash. Only a Boolean position-availability value is used for GPS coverage.
+
+### Physiology-profile validity
+
+A physiology profile is valid from `valid_from`, inclusive, until `valid_to`, exclusive.
+
+An activity may use a profile only when its local date falls inside that period. A profile is
+not applied retroactively to earlier activities.
+
+The configured profile currently records:
+
+- Observed maximum heart rate: 195 bpm
+- Lowest observed resting heart rate: 45 bpm
+- Lactate-threshold heart rate: unavailable
+- Threshold pace: unavailable
+
+The absence of a formally tested lactate threshold is preserved rather than estimated.
+
+## Pace calculations
+
+Moving pace is calculated as:
+
+`moving pace seconds per km = moving time seconds / distance km`
+
+Elapsed pace is calculated as:
+
+`elapsed pace seconds per km = elapsed time seconds / distance km`
+
+A pace is unavailable when distance or the relevant duration is zero.
+
+Moving pace is stored in the principal pace column. Elapsed pace is retained in the
+versioned additional-metrics document.
+
+## Effective activity duration
+
+Training duration uses moving time when moving time is greater than zero.
+
+If moving time is unavailable or zero, elapsed time is used as the deterministic fallback.
+
+The selected duration is called the effective duration.
+
+## Sensor coverage
+
+Heart-rate, GPS, and cadence coverage are measured by time rather than by counting samples.
+
+For each ordered pair of sensor observations:
+
+1. Calculate the interval to the following observation.
+2. Ignore non-positive intervals.
+3. Ignore intervals whose starting observation is marked paused.
+4. Cap the credited interval at 10 seconds.
+5. Credit the interval to a sensor only when the starting observation contains that sensor.
+
+The cap prevents one isolated observation from incorrectly claiming coverage across a long
+recording gap.
+
+Coverage is calculated as:
+
+`coverage percent = credited sensor duration / effective activity duration * 100`
+
+Coverage is bounded between zero and 100 percent.
+
+This calculation distinguishes activities with complete recent sensor streams from
+historical activities that contain only route or summary data.
+
+## Heart-rate zones
+
+The initial zone model uses percentage of observed maximum heart rate.
+
+| Zone | Percentage of observed maximum HR | Edwards weight |
+|---|---:|---:|
+| Zone 1 | Below 60 percent | 1 |
+| Zone 2 | 60 to below 70 percent | 2 |
+| Zone 3 | 70 to below 80 percent | 3 |
+| Zone 4 | 80 to below 90 percent | 4 |
+| Zone 5 | 90 percent or higher | 5 |
+
+Zone duration is calculated from the same capped time intervals used for heart-rate
+coverage.
+
+Each stored zone component contains:
+
+- Zone identifier
+- Observed seconds
+- Percentage of observed heart-rate time
+
+Zone percentages use observed heart-rate time as their denominator. They do not pretend
+that periods without heart-rate data belonged to a particular zone.
+
+Heart-rate zones are unavailable when no valid observed maximum heart rate applies to the
+activity date.
+
+## Edwards TRIMP
+
+Edwards TRIMP is calculated as:
+
+`Edwards TRIMP = sum(zone minutes * zone weight)`
+
+The weights are 1 through 5 for Zones 1 through 5.
+
+This value combines duration and cardiovascular intensity. It is stored as an additional
+per-activity metric when both conditions are satisfied:
+
+- A valid observed maximum heart rate applies.
+- The activity contains usable heart-rate intervals.
+
+Edwards TRIMP is not used as the initial full-history workload series because historical
+heart-rate coverage is incomplete. Doing so would make older activities appear falsely
+easy or unloaded.
+
+## Duration workload
+
+The initial longitudinal workload method is:
+
+`activity load = effective duration in minutes`
+
+Daily load is the sum of activity loads on the athlete's local calendar date.
+
+This method is intentionally simple and transparent. It provides consistent coverage across
+both historical Strava activities and recent Garmin activities.
+
+Its limitation is equally important: one minute of easy running and one minute of intense
+running receive the same load.
+
+Duration load and Edwards TRIMP therefore remain distinct methods. They must not be merged
+without a documented calibration.
+
+## Continuous daily series
+
+The workload series contains every calendar day from the first eligible activity through the
+requested as-of date.
+
+Days without running are stored with zero daily load. Rest days are not omitted.
+
+This prevents exponential workload state from remaining artificially unchanged across gaps.
+
+## Acute and chronic workload
+
+Acute and chronic states use deterministic exponential recurrences.
+
+For each day:
+
+`next state = previous state + (daily load - previous state) / time constant`
+
+The time constants are:
+
+- Acute load: 7 days
+- Chronic load: 42 days
+
+The states start at zero on the first day of the series.
+
+### Availability gates
+
+Acute load is unavailable until seven calendar days of history have been processed.
+
+Chronic load, fitness, fatigue, and form are unavailable until 42 calendar days have been
+processed.
+
+These gates avoid presenting early initialization values as mature workload estimates.
+
+## Fitness, fatigue, and form
+
+The initial model defines:
+
+- Fitness index as chronic load
+- Fatigue index as acute load
+- Form index as chronic load minus acute load
+
+Therefore:
+
+- Negative form indicates that recent load exceeds the longer-term load state.
+- Positive form indicates that recent load has fallen below the longer-term state.
+- A value near zero indicates similar acute and chronic states.
+
+These are model interpretations only. They do not independently establish readiness,
+adaptation, illness, overtraining, or injury risk.
+
+## Daily-load coverage
+
+The duration workload method has 100 percent method coverage when canonical activity
+duration is available.
+
+This coverage value means the selected method could be calculated. It does not mean that
+heart rate, GPS, cadence, or every physiological signal was available.
+
+Sensor coverage remains stored separately in per-activity metrics.
+
+## Input hashing
+
+Each per-activity metric stores a SHA-256 hash of the exact calculation inputs:
+
+- Algorithm version
+- Activity identifier
+- Distance
+- Moving and elapsed duration
+- Applicable physiology-profile identifier
+- Applicable observed maximum heart rate
+- Ordered privacy-preserving sensor values
+
+Raw coordinates are excluded.
+
+The unique identity is:
+
+`activity_id + algorithm_version + input_hash`
+
+When inputs do not change, recalculation reuses the existing metric. When an input changes,
+a new versioned metric row is created without deleting the earlier result.
+
+## Daily-load persistence
+
+Daily workload rows are uniquely identified by:
+
+`athlete_id + local_date + load_method + algorithm_version`
+
+Recalculation follows three outcomes:
+
+- Create a row when none exists.
+- Reuse a row when all calculated values are unchanged.
+- Update the versioned series row when its deterministic inputs produce changed values.
+
+The calculation is performed inside one database transaction.
+
+## Validation against the current dataset
+
+The first complete calculation on 2026-08-27 produced:
+
+| Measure | Result |
+|---|---:|
+| Canonical running activities processed | 130 |
+| Activity metrics created | 130 |
+| Activities inside the configured profile period | 90 |
+| Activities with Edwards TRIMP | 85 |
+| Daily workload rows | 829 |
+| Average heart-rate coverage across all activities | 65.08 percent |
+| Average GPS coverage across all activities | 96.86 percent |
+| Average cadence coverage across all activities | 65.08 percent |
+
+The sensor-coverage pattern is consistent with the known source history:
+
+- Recent Garmin-era activities provide complete heart-rate and cadence streams.
+- Historical Strava activities generally lack those sensors.
+- Route-position coverage exists across most of the full history.
+
+A second identical calculation created zero metrics, updated zero daily rows, reused all 130
+activity metrics, and reused all 829 daily rows.
+
+This verifies deterministic idempotency for the current calculation versions and persisted
+dataset.
+
+## Example workload interpretation
+
+On 2026-08-23, the duration model reported:
+
+- Daily load: 141.39 minutes
+- Acute load: 71.46
+- Chronic load: 49.34
+- Form: -22.12
+
+After four zero-load days, the 2026-08-27 state was:
+
+- Acute load: 38.57
+- Chronic load: 44.81
+- Form: +6.24
+
+This demonstrates the expected behavior of the exponential model: acute load falls faster
+than chronic load during rest.
+
+It does not by itself justify a recommendation to train, race, or rest. Later readiness and
+coaching logic must combine workload with goal context, performance evidence, data quality,
+and explicit safety rules.
+
+## Testing strategy
+
+The analytics implementation includes tests for:
+
+- Moving and elapsed pace
+- Duration workload
+- Heart-rate coverage
+- GPS and cadence coverage
+- Heart-rate zones
+- Edwards TRIMP
+- Sample-gap capping
+- Paused intervals
+- Rest-day insertion
+- Acute and chronic recurrence
+- Availability gates
+- Profile validity periods
+- Versioned activity-metric persistence
+- Daily-load persistence
+- Input-change recalculation
+- Excluded activities
+- Transaction rollback
+- CLI orchestration
+- Idempotent recalculation
+
+Golden deterministic tests use explicit expected numeric values rather than copying the
+production implementation.
+
+## Current limitations
+
+- Duration load does not represent intensity.
+- Edwards TRIMP cannot provide a consistent full-history series because historical HR is
+  missing.
+- Maximum-HR zones are less individualized than tested threshold-based zones.
+- The observed maximum heart rate may change with future evidence.
+- Resting heart rate is stored but is not yet used in the initial calculations.
+- Fitness and fatigue state variables have not been validated against independent
+  physiological measurements.
+- The model does not currently incorporate sleep, HRV, subjective soreness, illness,
+  temperature, course difficulty, or strength-training load.
+- The model does not produce medical diagnoses.
+- Results are validated for the available single-athlete dataset and are not population
+  evidence.
