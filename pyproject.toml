@@ -9,9 +9,12 @@ dependencies = [
     "defusedxml>=0.7.1,<1",
     "fastapi>=0.116,<1",
     "garmin-fit-sdk==21.213.0",
+    "pandas>=2.2,<3",
+    "plotly>=6,<7",
     "psycopg[binary]>=3.2,<4",
     "pydantic-settings>=2.10,<3",
     "sqlalchemy>=2.0,<3",
+    "streamlit>=1.49,<2",
     "uvicorn[standard]>=0.35,<1",
 ]
 
@@ -19,6 +22,7 @@ dependencies = [
 dev = [
     "httpx2>=2.12.0",
     "mypy>=1.17,<2",
+    "pandas-stubs>=2.2,<3",
     "pytest>=8,<10",
     "pytest-cov>=6,<8",
     "ruff>=0.12,<1",
@@ -50,6 +54,10 @@ python_version = "3.12"
 strict = true
 mypy_path = "src"
 exclude = ["alembic/versions"]
+
+[[tool.mypy.overrides]]
+module = ["plotly", "plotly.*"]
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

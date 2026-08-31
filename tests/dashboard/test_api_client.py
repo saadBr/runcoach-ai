@@ -1,0 +1,143 @@
+"""Tests for the dashboard HTTP client."""
+
+from datetime import date
+from email.message import Message
+from types import TracebackType
+from typing import Never, Self
+from urllib.error import HTTPError, URLError
+from urllib.request import Request
+
+import pytest
+
+from runcoach.dashboard import api_client
+from runcoach.dashboard.api_client import DashboardApiError, RunCoachApiClient
+
+
+class FakeResponse:
+    """Minimal context-managed HTTP response used by client tests."""
+
+    def __init__(self, body: bytes) -> None:
+        self._body = body
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(
+        self,
+        exception_type: type[BaseException] | None,
+        exception: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        del exception_type, exception, traceback
+
+    def read(self) -> bytes:
+        return self._body
+
+
+def test_overview_uses_normalized_api_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured_requests: list[tuple[str, float]] = []
+
+    def fake_urlopen(request: Request, timeout: float) -> FakeResponse:
+        captured_requests.append((request.full_url, timeout))
+        return FakeResponse(b'{"total_runs": 130}')
+
+    monkeypatch.setattr(api_client, "urlopen", fake_urlopen)
+
+    client = RunCoachApiClient("http://localhost:8000/", timeout_seconds=3.5)
+
+    result = client.get_overview()
+
+    assert result["total_runs"] == 130
+    assert captured_requests == [("http://localhost:8000/api/v1/analytics/overview", 3.5)]
+
+
+def test_trends_encodes_weeks_and_end_date(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured_urls: list[str] = []
+
+    def fake_urlopen(request: Request, timeout: float) -> FakeResponse:
+        del timeout
+        captured_urls.append(request.full_url)
+        return FakeResponse(b'{"weekly_training": [], "daily_workload": []}')
+
+    monkeypatch.setattr(api_client, "urlopen", fake_urlopen)
+
+    client = RunCoachApiClient("http://localhost:8000")
+
+    client.get_trends(weeks=8, end_date=date(2026, 8, 27))
+
+    assert captured_urls == [
+        "http://localhost:8000/api/v1/analytics/trends?weeks=8&end_date=2026-08-27"
+    ]
+
+
+@pytest.mark.parametrize("weeks", [0, 53])
+def test_trends_rejects_invalid_week_count(weeks: int) -> None:
+    client = RunCoachApiClient("http://localhost:8000")
+
+    with pytest.raises(ValueError, match="between 1 and 52"):
+        client.get_trends(weeks=weeks)
+
+
+@pytest.mark.parametrize(
+    ("base_url", "timeout_seconds", "message"),
+    [
+        ("localhost:8000", 5.0, "absolute HTTP or HTTPS"),
+        ("http://localhost:8000", 0.0, "greater than zero"),
+    ],
+)
+def test_client_rejects_invalid_configuration(
+    base_url: str,
+    timeout_seconds: float,
+    message: str,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        RunCoachApiClient(base_url, timeout_seconds=timeout_seconds)
+
+
+def test_client_rejects_non_object_json(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_urlopen(request: Request, timeout: float) -> FakeResponse:
+        del request, timeout
+        return FakeResponse(b"[]")
+
+    monkeypatch.setattr(api_client, "urlopen", fake_urlopen)
+
+    with pytest.raises(DashboardApiError, match="unexpected response structure"):
+        RunCoachApiClient("http://localhost:8000").get_overview()
+
+
+def test_client_translates_http_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_urlopen(request: Request, timeout: float) -> Never:
+        del timeout
+        raise HTTPError(
+            request.full_url,
+            503,
+            "Service unavailable",
+            hdrs=Message(),
+            fp=None,
+        )
+
+    monkeypatch.setattr(api_client, "urlopen", fake_urlopen)
+
+    with pytest.raises(DashboardApiError, match="HTTP 503"):
+        RunCoachApiClient("http://localhost:8000").get_overview()
+
+
+def test_client_translates_connection_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_urlopen(request: Request, timeout: float) -> Never:
+        del request, timeout
+        raise URLError("connection refused")
+
+    monkeypatch.setattr(api_client, "urlopen", fake_urlopen)
+
+    with pytest.raises(DashboardApiError, match="unavailable"):
+        RunCoachApiClient("http://localhost:8000").get_overview()

@@ -9,7 +9,7 @@ architecture, and controlled AI-agent orchestration. It applies Big Data enginee
 principles without claiming to operate at genuine Big Data scale.
 
 > Project status: activity ingestion, reconciliation, sensor storage, and deterministic
-> workload analytics are operational.
+> analytics, read-only analytics APIs, and the containerized dashboard are operational.
 
 ## Problem
 
@@ -64,6 +64,9 @@ The operational data pipeline currently provides:
 - Full-history duration workload.
 - Gap-free daily acute, chronic, fitness, fatigue, and form series.
 - Versioned input hashing and reproducible recalculation.
+- Read-only overview and longitudinal-trends API endpoints.
+- A validated Streamlit dashboard with interactive Plotly visualizations.
+- Independent, health-checked API, dashboard, and PostgreSQL Compose services.
 
 ## Architecture
 
@@ -260,6 +263,32 @@ calendar weeks are retained so charts preserve the time axis.
 
 The endpoint exposes calculated aggregates only. It does not return athlete identifiers,
 private filenames, source identifiers, or raw GPS coordinates.
+
+## Analytical dashboard
+
+Run the dashboard directly while the API is available at `http://localhost:8000`:
+
+```powershell
+uv run streamlit run src/runcoach/dashboard/app.py
+```
+
+The host dashboard uses `RUNCOACH_API_URL`, which defaults to `http://localhost:8000`.
+
+Start the complete containerized platform with:
+
+```powershell
+docker compose up --build -d --wait
+```
+
+Local endpoints:
+
+- Dashboard: `http://localhost:8501`
+- FastAPI documentation: `http://localhost:8000/docs`
+- API readiness: `http://localhost:8000/health/ready`
+
+The dashboard consumes validated aggregate API responses. It does not connect directly to
+PostgreSQL, mount the private activity directory, or expose athlete identifiers, source
+filenames, credentials, or raw GPS coordinates.
 
 ## Quality checks
 
