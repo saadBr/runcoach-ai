@@ -2,6 +2,7 @@
 
 from datetime import date
 from typing import Annotated
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict
@@ -11,6 +12,10 @@ from runcoach.config import Settings, get_settings
 from runcoach.db.analytics_queries import (
     AnalyticsQueryError,
     AnalyticsQueryService,
+)
+from runcoach.db.analytics_trends import (
+    AnalyticsTrendsQueryError,
+    AnalyticsTrendsQueryService,
 )
 from runcoach.db.session import get_db_session
 
@@ -52,7 +57,7 @@ class SensorCoverageResponse(BaseModel):
 
 
 class WorkloadSnapshotResponse(BaseModel):
-    """Latest deterministic workload state."""
+    """One deterministic daily workload state."""
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -85,6 +90,47 @@ class AnalyticsOverviewResponse(BaseModel):
     workload: WorkloadSnapshotResponse
 
 
+class WeeklyTrainingResponse(BaseModel):
+    """One calendar-week training aggregate."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    week_start: date
+    week_end: date
+    runs: int
+    distance_km: float
+    moving_hours: float
+    duration_load_minutes: float
+    weighted_pace_seconds_per_km: float | None
+    elevation_gain_m: float | None
+    heart_rate_load_activities: int
+    edwards_trimp: float | None
+
+
+class AnalyticsTrendsResponse(BaseModel):
+    """Dashboard-ready weekly and daily trend series."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    start_date: date
+    end_date: date
+    requested_weeks: int
+    weekly_training: tuple[WeeklyTrainingResponse, ...]
+    daily_workload: tuple[WorkloadSnapshotResponse, ...]
+
+
+def _configured_athlete_id(
+    settings: Settings,
+) -> UUID:
+    if settings.athlete_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Athlete configuration is unavailable.",
+        )
+
+    return settings.athlete_id
+
+
 @router.get(
     "/overview",
     response_model=AnalyticsOverviewResponse,
@@ -103,15 +149,11 @@ def analytics_overview(
 ) -> AnalyticsOverviewResponse:
     """Return deterministic activity and workload aggregates."""
 
-    if settings.athlete_id is None:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Athlete configuration is unavailable.",
-        )
+    athlete_id = _configured_athlete_id(settings)
 
     try:
         overview = AnalyticsQueryService(database_session).overview(
-            athlete_id=settings.athlete_id,
+            athlete_id=athlete_id,
             as_of_date=as_of_date,
         )
     except AnalyticsQueryError as error:
@@ -121,3 +163,44 @@ def analytics_overview(
         ) from error
 
     return AnalyticsOverviewResponse.model_validate(overview)
+
+
+@router.get(
+    "/trends",
+    response_model=AnalyticsTrendsResponse,
+)
+def analytics_trends(
+    settings: SettingsDependency,
+    database_session: DatabaseSessionDependency,
+    weeks: Annotated[
+        int,
+        Query(
+            ge=1,
+            le=52,
+            description="Number of calendar weeks to return.",
+        ),
+    ] = 12,
+    end_date: Annotated[
+        date | None,
+        Query(
+            description=("Exact calculated local end date. Omit to use the latest workload date.")
+        ),
+    ] = None,
+) -> AnalyticsTrendsResponse:
+    """Return weekly training and daily workload trend series."""
+
+    athlete_id = _configured_athlete_id(settings)
+
+    try:
+        trends = AnalyticsTrendsQueryService(database_session).trends(
+            athlete_id=athlete_id,
+            weeks=weeks,
+            end_date=end_date,
+        )
+    except AnalyticsTrendsQueryError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(error),
+        ) from error
+
+    return AnalyticsTrendsResponse.model_validate(trends)

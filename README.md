@@ -238,6 +238,29 @@ The response includes:
 The endpoint does not expose the athlete UUID, source identifiers, filenames, or raw route
 coordinates.
 
+### Training trends
+
+The trends endpoint returns calendar-week training summaries and the corresponding daily
+workload series:
+
+```powershell
+Invoke-RestMethod `
+  'http://localhost:8000/api/v1/analytics/trends?weeks=12'
+```
+
+Optional query parameters:
+
+- `weeks`: Number of calendar weeks from 1 through 52; defaults to 12.
+- `end_date`: Exact calculated workload date in `YYYY-MM-DD` format; defaults to the latest
+  available workload date.
+
+Weekly results include run count, distance, moving time, duration load, weighted average
+pace, elevation gain, heart-rate load coverage, and Edwards TRIMP when available. Empty
+calendar weeks are retained so charts preserve the time axis.
+
+The endpoint exposes calculated aggregates only. It does not return athlete identifiers,
+private filenames, source identifiers, or raw GPS coordinates.
+
 ## Quality checks
 
 Run the complete local verification suite:

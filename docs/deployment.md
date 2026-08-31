@@ -131,7 +131,7 @@ The repository pins Python in `.python-version` and locks Python dependencies in
 
 ## First-time local setup
 
-Run these commands from `C:\Users\saade\runcoach-ai`:
+Run these commands from the repository root:
 
 ```powershell
 Copy-Item -LiteralPath '.env.example' -Destination '.env'
