@@ -1,452 +1,639 @@
 # Architecture
 
-## Status
+## Document status
 
 - Project: RunCoach AI
-- Document state: Initial approved baseline
-- Last updated: 2026-08-23
+- Document state: Living architecture aligned with the verified implementation
+- Last updated: 2026-08-31
 - Architecture style: Modular monolith with separate runtime processes
-- Current implementation: Milestone 1A foundation
+- Deployment model: Local private-data platform and sanitized cloud demonstration
+
+## Purpose
+
+RunCoach AI transforms heterogeneous Garmin and Strava exports into a canonical running
+history, deterministic training analytics, performance evidence, and controlled coaching
+recommendations.
+
+This document describes:
+
+- The architecture that is currently implemented and verified.
+- The boundaries that protect privacy and scientific validity.
+- The planned machine-learning and coaching components.
+- The evidence required before introducing additional infrastructure.
+
+Planned capabilities are identified explicitly and are not presented as operational.
 
 ## Architectural drivers
 
-The architecture is shaped by these priorities:
+The architecture is shaped by the following priorities:
 
-1. Complete a defensible MVP within four weeks.
-2. Preserve private activity data and source provenance.
-3. Keep deterministic calculations independent from the LLM.
-4. Support heterogeneous exports without depending on Garmin API access.
-5. Make data-quality, model, and recommendation decisions auditable.
-6. Demonstrate data-engineering, ML, cloud, and agent-workflow concepts without artificial
-   distributed complexity.
-7. Remain reproducible on Windows development machines, Docker, CI, and a managed cloud container platform.
+1. Preserve private activity data, credentials, and source provenance.
+2. Keep deterministic calculations independent from language-model behavior.
+3. Reconcile heterogeneous historical and recent data without losing lineage.
+4. Support export-based operation without depending on Garmin API availability.
+5. Make imports, calculations, predictions, and recommendations reproducible and auditable.
+6. Separate presentation, service contracts, domain logic, and persistence.
+7. Evaluate machine-learning validity against deterministic baselines and chronological
+   holdouts.
+8. Run reproducibly on Windows, Docker Compose, CI, and a managed container platform.
+9. Adopt distributed infrastructure only when measured requirements justify its operational
+   cost.
 
-## Primary decision
+## Primary architectural decision
 
 RunCoach AI uses a modular monolith.
 
-All domain modules share:
+All modules share:
 
 - One Python repository.
 - One versioned application release.
-- One PostgreSQL database.
+- One PostgreSQL system of record.
 - One set of domain contracts.
-- One CI pipeline.
+- One dependency lockfile.
+- One continuous-integration pipeline.
 
-The code may run as separate processes:
+The application has separate runtime processes where process isolation solves a concrete
+problem:
 
-- FastAPI API.
-- Database-backed import worker.
-- Streamlit UI.
-- Future scheduled analytics process, only if required.
+- FastAPI provides typed, read-only analytical service contracts.
+- Streamlit provides the interactive analytical interface.
+- CLI processes perform private imports, profile configuration, and deterministic
+  recalculation.
+- PostgreSQL provides durable transactional persistence.
 
-Separate processes do not make these modules independent microservices. They remain one
-application and are changed, tested, and deployed together.
+These processes are not independent domain microservices. They are released together and
+share application modules and database contracts. This preserves modularity without adding
+distributed transactions, network duplication, or independent-service operational overhead.
+
+## Implementation status
+
+### Operational capabilities
+
+The verified implementation currently provides:
+
+- Strava positional CSV parsing, including duplicate-header handling.
+- Garmin summarized-activity JSON parsing with explicit unit normalization.
+- FIT, FIT.GZ, and namespace-aware GPX parsing.
+- Conservative cross-source running-activity reconciliation.
+- Transactional and idempotent import persistence.
+- File, source-record, canonical-record, and field-level provenance.
+- PostgreSQL storage for activities, laps, and ordered trackpoints.
+- Time-valid physiology profiles.
+- Deterministic pace, sensor coverage, heart-rate zones, Edwards TRIMP, and duration load.
+- Gap-free daily acute, chronic, fitness, fatigue, and form series.
+- Versioned input hashing and reproducible recalculation.
+- Read-only analytics overview and longitudinal trend endpoints.
+- A validated Streamlit dashboard using FastAPI rather than direct database access.
+- Health-checked PostgreSQL, FastAPI, and Streamlit Compose services.
+
+### Planned capabilities
+
+The following remain planned and require their own implementation and validation evidence:
+
+- Personal-best and rolling-segment detection.
+- Deterministic Riegel race-performance estimates.
+- Goal and race-readiness snapshots.
+- A machine-learning experiment selected after a label audit.
+- Controlled LangGraph coaching orchestration.
+- Provider-neutral language-model integration.
+- Sanitized cloud deployment.
 
 ## System context
 
 ```mermaid
 flowchart LR
-    Athlete["Athlete"] --> System["RunCoach AI"]
-    Exports["Garmin and Strava exports"] --> System
+    Athlete["Athlete"] --> UI["RunCoach AI dashboard and CLI"]
+    Exports["Garmin and Strava exports"] --> Private["Ignored private data area"]
+    Private --> CLI["Import commands"]
+    CLI --> System["RunCoach AI application"]
+    UI --> System
     System --> Athlete
-    System --> Provider["Optional LLM provider"]
-    Operator["System operator"] --> System
-    Repository["GitHub repository and CI"] --> System
+
+    Repository["GitHub repository"] --> CI["Continuous integration"]
+    CI --> System
+
+    System -. "approved structured evidence only" .-> LLM["Optional LLM provider"]
 ```
 
-### External actors and systems
+### External actors and trust boundaries
 
 | Actor or system | Interaction | Trust consideration |
 |---|---|---|
-| Athlete | Imports files, sets goals, reviews analytics | Owns the private source data |
-| Garmin and Strava exports | Supply files created outside the system | Schemas and completeness may vary |
-| LLM provider | Interprets approved structured evidence | Receives minimized data only |
-| GitHub | Stores source and runs CI | Must never receive secrets or raw exports |
-| Managed cloud container platform | Hosts sanitized demonstration | Must not become the authoritative private store |
+| Athlete | Imports private exports and reviews analytics | Owns the source data and goals |
+| Garmin and Strava exports | Supply externally generated files | Schemas and completeness can vary |
+| GitHub | Stores source and runs CI | Receives no secrets or raw personal exports |
+| Managed container platform | Hosts a sanitized demonstration | Is not the authoritative private store |
+| Optional LLM provider | Explains approved structured evidence | Receives minimized, validated inputs only |
 
-## Container view
+## Current runtime architecture
 
 ```mermaid
 flowchart LR
-    Browser["Web browser"] --> UI["Streamlit UI"]
-    UI --> API["FastAPI API"]
-
-    Files["Private export files"] --> API
+    Browser["Web browser"] --> Dashboard["Streamlit dashboard"]
+    Dashboard -->|"Aggregate HTTP responses"| API["FastAPI service"]
     API --> DB[("PostgreSQL")]
-    Worker["Import worker"] --> DB
-    Worker --> PrivateStore["Ignored private file area"]
-    API --> PrivateStore
 
-    DB --> Analytics["Deterministic analytics modules"]
-    Analytics --> DB
+    Private["Ignored private export area"] --> SummaryCLI["Summary import CLI"]
+    Private --> SensorCLI["Sensor import CLI"]
+    SummaryCLI --> DB
+    SensorCLI --> DB
 
-    DB --> ML["scikit-learn training and inference"]
-    ML --> DB
+    ProfileCLI["Physiology profile CLI"] --> DB
+    AnalyticsCLI["Analytics calculation CLI"] --> DB
 
-    DB --> Graph["LangGraph coaching workflow"]
-    Graph --> LLM["Provider-neutral LLM interface"]
-    LLM --> OpenAI["OpenAI API when enabled"]
-    Graph --> DB
+    API -. "Only API service mounts private directory in Compose" .-> Private
 ```
 
-### Current Milestone 1A containers
+### Runtime responsibilities
 
-The current Docker Compose foundation contains:
-
-- `api`: FastAPI application running as a non-root user.
-- `db`: PostgreSQL 17 with a named development volume.
-
-The import worker and Streamlit UI are added only when their first behavior is implemented.
-
-## Module boundaries
-
-The target source structure is organized by responsibility:
-
-| Module | Responsibility | Must not do |
+| Runtime | Responsibility | Data access |
 |---|---|---|
-| `api` | HTTP contracts, validation, dependency injection | Implement analytical formulas |
-| `config` | Typed environment configuration | Contain secrets in source |
-| `db` | SQLAlchemy base, sessions, repositories | Parse activity files |
-| `profiles` | Athlete, physiology, and goal rules | Depend on Streamlit |
-| `ingestion` | Adapter contracts, parsing, validation, normalization | Generate coaching prose |
-| `quality` | Data-quality rules, issue severity, coverage | Silently repair ambiguous data |
-| `activities` | Canonical activity and sensor domain behavior | Know provider-specific file structure |
-| `analytics` | Deterministic metrics and readiness components | Call an LLM |
-| `performance` | PB extraction and deterministic race baseline | Use post-event data in predictions |
-| `ml` | Feature datasets, training, evaluation, inference | Hide failed baseline comparisons |
-| `coaching` | Graph state, evidence assembly, provider abstraction | Recalculate trusted metrics |
-| `ui` | Streamlit presentation and interaction | Duplicate domain calculations |
+| PostgreSQL | Durable canonical, source, sensor, profile, and analytical state | Local volume or managed database |
+| FastAPI | Typed aggregate query contracts and health endpoints | PostgreSQL and configured private mount |
+| Streamlit | Interactive visualization and evidence presentation | FastAPI only |
+| Import CLI | Parsing, validation, reconciliation, and persistence | Private files and PostgreSQL |
+| Analytics CLI | Versioned deterministic recalculation | PostgreSQL |
 
-Dependencies should point inward toward stable domain contracts. UI, API, parsers, database,
-and external providers are replaceable adapters around application and domain behavior.
+The API waits for PostgreSQL readiness. The dashboard waits for API readiness. The dashboard
+container does not mount private files, receive the athlete UUID, or connect directly to
+PostgreSQL.
 
-## Import data flow
+## Logical module boundaries
+
+| Module | Responsibility | Boundary |
+|---|---|---|
+| `config` | Typed environment configuration | Does not contain committed secrets |
+| `ingestion` | Parsing, validation, normalization, and reconciliation | Does not persist directly or generate coaching prose |
+| `db` | SQLAlchemy models, repositories, transactions, and analytical queries | Does not parse provider files or render UI |
+| `analytics` | Deterministic activity and workload calculations | Does not call an LLM or depend on Streamlit |
+| `api` | HTTP schemas, routing, validation, and dependency injection | Does not implement analytical formulas |
+| `dashboard` | API client, response validation, and presentation | Does not query PostgreSQL or recalculate domain metrics |
+| `performance` | Planned PB extraction and deterministic race baselines | Does not use post-event information in pre-event estimates |
+| `ml` | Planned datasets, training, evaluation, and inference | Does not hide failed baseline comparisons |
+| `coaching` | Planned evidence assembly and controlled orchestration | Does not replace deterministic calculations |
+
+Dependencies point toward stable contracts and deterministic domain behavior. Presentation,
+HTTP, database, file-format, and external-provider concerns remain replaceable adapters.
+
+## Ingestion architecture
+
+### Summary import flow
+
+```mermaid
+sequenceDiagram
+    actor Operator
+    participant CLI as Summary import CLI
+    participant Strava as Strava CSV adapter
+    participant Garmin as Garmin JSON adapter
+    participant Reconcile as Reconciliation service
+    participant Persist as Persistence service
+    participant DB as PostgreSQL
+
+    Operator->>CLI: Provide ignored export paths
+    CLI->>Strava: Parse positional activity CSV
+    CLI->>Garmin: Parse summarized activities
+    Strava-->>CLI: Normalized source activities and findings
+    Garmin-->>CLI: Normalized source activities and findings
+    CLI->>Reconcile: Reconcile running representations
+    Reconcile-->>CLI: Canonical activities and provenance
+    CLI->>Persist: Persist one transactional import result
+    Persist->>DB: Reuse or create files, sources, and activities
+    DB-->>Persist: Durable identifiers and counts
+    Persist-->>CLI: Sanitized import summary
+```
+
+### Raw sensor import flow
+
+```mermaid
+flowchart LR
+    Export["Private FIT, FIT.GZ, or GPX"] --> Discover["Format-aware discovery"]
+    Discover --> Parse["FIT or GPX adapter"]
+    Parse --> Normalize["Normalized laps and trackpoints"]
+    Normalize --> Match["Conservative canonical match"]
+    Match --> Select["Canonical sensor-source selection"]
+    Select --> Persist["Transactional bulk persistence"]
+    Persist --> DB[("Laps, trackpoints, provenance")]
+    Match --> Findings["Structured quality findings"]
+    Findings --> DB
+```
+
+### Ingestion invariants
+
+- Raw files remain in ignored private directories.
+- File content hashes provide file-level idempotence.
+- Provider identifiers and fingerprints provide record-level idempotence.
+- Parsing produces source-neutral contracts before persistence.
+- Source units are normalized explicitly and tested with calibrated examples.
+- Malformed or ambiguous inputs create structured findings rather than silent repairs.
+- One canonical activity can retain multiple source representations.
+- Bulk sensor persistence avoids one transaction per trackpoint.
+- Re-importing unchanged exports creates no duplicate canonical activities or sensor rows.
+
+## Canonicalization and provenance
+
+Provider records and canonical activities are separate entities.
+
+- An import file can produce multiple source-activity records.
+- Multiple source records can resolve to one canonical activity.
+- Exact duplicates use hashes, provider identifiers, or stable fingerprints.
+- Cross-source matching uses sport, timestamp, duration, and distance tolerances.
+- Ambiguous matches are not resolved automatically.
+- Canonical fields retain the source representation that supplied each value.
+- One authoritative sensor stream is selected rather than interleaving provider trackpoints.
+
+Inspection of the available exports established the following precedence:
+
+- Garmin is preferred for recent sensor data when matching raw activity detail exists.
+- Strava supplies the longer historical activity record.
+- Strava remains the fallback when Garmin raw detail is unavailable.
+- Missing historical sensor values remain missing and are not interpreted as zero.
+
+This precedence is a versioned data-resolution decision, not a claim that one provider is
+universally more accurate.
+
+## Persistence architecture
+
+PostgreSQL is the authoritative structured store. SQLAlchemy defines mappings and invariants,
+while Alembic provides reproducible schema evolution.
+
+### Implemented table groups
+
+| Group | Tables | Purpose |
+|---|---|---|
+| Identity | `athletes`, `physiology_profiles` | Athlete scope and time-valid calculation inputs |
+| Import control | `import_batches`, `import_files` | Durable import state and file identity |
+| Provenance | `source_activities`, `source_activity_files`, `activity_field_sources` | Source lineage and canonical resolution |
+| Data quality | `data_quality_issues` | Structured findings and resolution state |
+| Canonical activity | `activities`, `laps`, `trackpoints` | Running history and selected sensor observations |
+| Analytics | `activity_metrics`, `daily_loads` | Versioned activity and longitudinal calculations |
+
+### Database principles
+
+- Foreign keys and uniqueness constraints enforce critical invariants.
+- Check constraints enforce enumerations and plausible structural ranges.
+- Timestamps use timezone-aware storage.
+- Ordered trackpoint keys preserve sensor sequence.
+- Indexes support athlete/date, activity/time, and provenance queries.
+- JSONB is limited to bounded metadata and versioned analytical components.
+- Application services define transaction boundaries.
+- SQLite is not treated as behaviorally equivalent to PostgreSQL in integration testing.
+
+PostGIS, TimescaleDB, and partitioning remain adoption options. They become relevant only when
+measured geospatial queries, row volume, retention policy, or maintenance cost demonstrates a
+benefit.
+
+## Deterministic analytics architecture
+
+```mermaid
+flowchart LR
+    Activity["Canonical activity"] --> Coverage["Sensor coverage"]
+    Activity --> Pace["Pace and duration metrics"]
+    Profile["Time-valid physiology profile"] --> Zones["Heart-rate zone configuration"]
+    Trackpoints["Selected trackpoints"] --> Coverage
+    Trackpoints --> Zones
+    Coverage --> Metrics["Versioned activity metrics"]
+    Pace --> Metrics
+    Zones --> Metrics
+    Metrics --> Daily["Gap-free daily load series"]
+    Daily --> Acute["Acute load"]
+    Daily --> Chronic["Chronic load"]
+    Acute --> Form["Form indicator"]
+    Chronic --> Form
+    Metrics --> API["Analytics API"]
+    Daily --> API
+    API --> Dashboard["Streamlit dashboard"]
+```
+
+Every derived result records or can resolve:
+
+- Athlete and canonical activity inputs.
+- Algorithm name and version.
+- Applicable physiology-profile version.
+- Calculation timestamp.
+- Input hash where practical.
+- Sensor coverage and method availability.
+
+The language model never calculates pace, heart-rate zones, TRIMP, training load, fitness,
+fatigue, form, race prediction, or readiness values.
+
+### Current calculation methods
+
+| Result | Method |
+|---|---|
+| Pace | Moving time divided by distance with explicit availability rules |
+| Sensor coverage | Valid observations divided by eligible observations |
+| Heart-rate zones | Five-zone percentage-of-observed-maximum method |
+| Heart-rate load | Edwards TRIMP when heart-rate evidence is sufficient |
+| Historical longitudinal load | Effective running-duration minutes |
+| Acute load | Seven-day exponential recurrence |
+| Chronic load | Forty-two-day exponential recurrence |
+| Form | Chronic load minus acute load |
+
+These quantities are modeled indicators. They are not direct physiological measurements or
+medical diagnoses.
+
+## API architecture
+
+The API is a typed boundary over persisted deterministic results.
+
+### Implemented endpoints
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /health/live` | Process liveness |
+| `GET /health/ready` | Database-backed readiness |
+| `GET /api/v1/analytics/overview` | Current or exact-date analytical summary |
+| `GET /api/v1/analytics/trends` | Calendar-week training and daily workload series |
+
+### API principles
+
+- Feature endpoints are versioned under `/api/v1`.
+- Pydantic models define response contracts.
+- Database models are not serialized directly.
+- Query services are read-only and use persisted analytical versions.
+- Domain failures map to stable HTTP behavior.
+- Aggregate endpoints expose no athlete UUID, source filename, credential, or raw coordinate.
+- New collections require pagination and explicit filtering contracts.
+
+## Dashboard architecture
+
+The Streamlit dashboard is a presentation adapter, not an alternative analytical engine.
 
 ```mermaid
 sequenceDiagram
     actor Athlete
-    participant UI as Streamlit or CLI
+    participant UI as Streamlit dashboard
+    participant Client as Dashboard API client
     participant API as FastAPI
+    participant Query as Analytical query service
     participant DB as PostgreSQL
-    participant Worker as Import worker
-    participant Parser as Format adapter
-    participant Metrics as Analytics engine
 
-    Athlete->>UI: Select private export
-    UI->>API: Create import request
-    API->>DB: Store import batch and file metadata
-    API-->>UI: Return import batch identifier
-    Worker->>DB: Lease pending import
-    Worker->>Parser: Parse inspected file format
-    Parser-->>Worker: Source records and sensor samples
-    Worker->>Worker: Validate and normalize
-    Worker->>DB: Check hashes, source IDs, and duplicate candidates
-
-    alt Valid and unambiguous
-        Worker->>DB: Persist source and canonical records transactionally
-        Worker->>Metrics: Request deterministic calculations
-        Metrics->>DB: Persist versioned derived metrics
-        Worker->>DB: Mark import accepted
-    else Duplicate
-        Worker->>DB: Link source provenance and mark duplicate
-    else Invalid or ambiguous
-        Worker->>DB: Persist quality findings and review status
-    end
-
-    UI->>API: Poll import status
-    API-->>UI: Return counts, warnings, and errors
+    Athlete->>UI: Select history window
+    UI->>Client: Request overview and trends
+    Client->>API: Validated HTTP GET requests
+    API->>Query: Execute read-only aggregate query
+    Query->>DB: Read versioned metrics and daily loads
+    DB-->>Query: Persisted deterministic evidence
+    Query-->>API: Typed analytical result
+    API-->>Client: JSON response
+    Client-->>UI: Strict validated dashboard schema
+    UI-->>Athlete: Metrics, charts, coverage, and limitations
 ```
 
-## Import-job state model
+Dashboard responsibilities include:
 
-A PostgreSQL table provides a durable state machine. This avoids introducing Kafka or Redis
-for a personal-scale batch workload.
+- Displaying totals and selected analytical windows.
+- Visualizing weekly volume, pace, elevation, and workload.
+- Showing missing-data coverage and method provenance.
+- Preserving empty calendar weeks on chart time axes.
+- Reporting unavailable values rather than manufacturing zeros.
 
-```mermaid
-stateDiagram-v2
-    [*] --> Pending
-    Pending --> Processing: Worker leases job
-    Processing --> Completed: All files handled
-    Processing --> CompletedWithWarnings: Accepted with findings
-    Processing --> Failed: Unrecoverable batch failure
-    Processing --> Pending: Retryable failure and lease expiry
-    Failed --> Pending: Explicit retry
-    Completed --> [*]
-    CompletedWithWarnings --> [*]
-```
-
-Requirements:
-
-- A worker lease has an expiry time.
-- Processing is idempotent.
-- Individual malformed files do not automatically fail the entire batch.
-- Retry counts and sanitized error details are persisted.
-- File bytes are not stored in the job table.
-
-## Canonicalization and provenance
-
-Provider records and canonical activities are separate concepts.
-
-- An import file produces one or more source-activity records.
-- Multiple source records may resolve to one canonical activity.
-- Exact duplicates use file hashes or provider identifiers.
-- Cross-source candidates use documented timestamp, duration, distance, and sport tolerances.
-- Ambiguous candidates require review.
-- A canonical activity selects one authoritative sensor stream instead of interleaving Garmin
-  and Strava points.
-- Source values remain available for audit.
-
-Recent Garmin FIT data is expected to be richer, but source precedence is not finalized until
-real exports are inspected.
-
-## Deterministic analytics flow
-
-```mermaid
-flowchart LR
-    Activity["Canonical activity"] --> Coverage["Sensor coverage analysis"]
-    Profile["Time-valid physiology profile"] --> Zones["Zone configuration"]
-    Coverage --> Metrics["Activity metrics"]
-    Zones --> Metrics
-    Metrics --> Daily["Daily load summary"]
-    Daily --> Trends["Acute, chronic, fitness, fatigue, and form indices"]
-    Trends --> Readiness["Goal-specific readiness components"]
-    PB["Verified personal performances"] --> Baseline["Riegel race baseline"]
-    Baseline --> Readiness
-    Readiness --> Evidence["Versioned evidence snapshot"]
-```
-
-Every derived result records:
-
-- Athlete and source inputs.
-- Calculation date.
-- Algorithm name and version.
-- Relevant parameter or profile version.
-- Data-coverage information.
-- Input hash where practical.
-
-A recalculation creates or supersedes a versioned result rather than silently changing the
-meaning of historical output.
+The dashboard does not import files, query PostgreSQL, calculate training metrics, or access
+raw GPS coordinates.
 
 ## Machine-learning boundary
 
-The ML module consumes a frozen feature dataset produced from persisted, versioned inputs.
+The machine-learning module is planned but not yet operational. Its final supervised target
+depends on a documented label audit.
 
-It does not:
+The module will consume a frozen, versioned feature dataset produced from persisted evidence.
+It will not:
 
-- Read future activity data when creating a pre-event feature row.
+- Read information occurring after a prediction timestamp.
 - Train directly from mutable dashboard queries.
-- Replace deterministic baselines.
-- Send private datasets to an LLM.
+- Replace the deterministic Riegel baseline.
+- Present an underpowered experiment as generalizable evidence.
+- Send the private dataset to an external LLM.
 
-Model artifacts and experiment records include dataset manifest, feature version, split
-strategy, parameters, metrics, and conclusion. A model may remain experimental when evidence
-is insufficient.
+Experiment records will include dataset manifest, feature version, chronological split,
+parameters, baseline results, candidate-model results, limitations, and conclusion.
 
-## Coaching workflow boundary
+## Coaching and LLM boundary
 
-The coaching graph receives a structured evidence snapshot, not raw activity files.
+The coaching workflow is planned as a controlled graph over structured evidence.
 
 ```mermaid
 flowchart LR
-    Start["Start"] --> Quality["Data-quality agent"]
-    Quality -->|"Insufficient"| Stop["Return limitations"]
-    Quality -->|"Usable"| Load["Training-load analyst"]
-    Quality -->|"Usable"| Prediction["Performance-prediction agent"]
-    Load --> Coach["Coaching agent"]
-    Prediction --> Coach
-    Coach --> Review["Safety and consistency reviewer"]
+    Start["Coaching request"] --> Quality["Evidence-quality check"]
+    Quality -->|"Insufficient"| Limits["Return limitations"]
+    Quality -->|"Usable"| Load["Training-load analysis"]
+    Quality -->|"Usable"| Performance["Performance evidence"]
+    Load --> Coach["Recommendation synthesis"]
+    Performance --> Coach
+    Coach --> Review["Safety and consistency review"]
     Review -->|"Approved"| Persist["Persist recommendation"]
-    Review -->|"Revise once"| Coach
-    Review -->|"Still unsafe"| Fallback["Deterministic fallback"]
+    Review -->|"Revision allowed"| Coach
+    Review -->|"Rejected"| Fallback["Deterministic fallback"]
 ```
 
-The LLM is used only by nodes that need language interpretation. Analytical nodes call typed,
-deterministic services.
+The graph will receive evidence identifiers, calculated values, coverage flags, goals, and
+limitations. Raw activity files and raw GPS tracks are outside the default LLM boundary.
 
-## API principles
-
-- Version public domain endpoints under `/api/v1` when feature endpoints begin.
-- Keep `/health/live` and `/health/ready` unversioned for operations.
-- Use Pydantic request and response models.
-- Return stable machine-readable error codes for domain failures.
-- Do not expose database models directly.
-- Use pagination for activity and issue collections.
-- Reject unsupported or oversized uploads before parsing.
-- Do not return raw credentials, stack traces, or private filesystem paths.
-
-## Database principles
-
-- PostgreSQL is the authoritative structured store.
-- SQLAlchemy manages persistence mappings.
-- Alembic manages all schema changes.
-- Foreign keys and uniqueness constraints enforce critical invariants.
-- JSONB is limited to flexible provenance, metric components, and graph state.
-- Trackpoints use ordered keys and appropriate activity/time indexes.
-- Bulk inserts avoid one transaction per trackpoint.
-- SQLite is not treated as behaviorally equivalent in integration tests.
-
-PostGIS and TimescaleDB are not required for the MVP. They may be evaluated only if a
-measured query or geospatial requirement justifies them.
-
-## Security and privacy boundaries
+## Security and privacy architecture
 
 ### Repository boundary
 
-Allowed:
+Allowed repository content:
 
-- Source code.
-- Documentation.
+- Source code and migrations.
+- Architecture and methodology documentation.
 - Synthetic or verified sanitized fixtures.
-- `.env.example` with blank secrets.
+- `.env.example` containing no secret value.
 
-Forbidden:
+Private local content:
 
-- Raw exports.
-- `.env`.
-- API credentials.
+- Raw Garmin and Strava exports.
+- Extracted activity files.
+- `.env` and API credentials.
 - Private database dumps.
 - Identifying route coordinates.
 
-### LLM boundary
+### Runtime boundary
 
-Allowed by default:
-
-- Calculated summary values.
-- Goal type and relevant dates.
-- Evidence identifiers.
-- Data-quality and confidence flags.
-
-Forbidden by default:
-
-- Raw GPS points.
-- Provider credentials.
-- Exact home or frequently visited locations.
-- Unnecessary names or account identifiers.
-- Unvalidated medical conclusions.
+- PostgreSQL credentials are supplied through environment variables.
+- The API and dashboard run as non-root users.
+- Only the API service receives the private-data mount in Compose.
+- The dashboard receives only an internal API URL.
+- API response schemas exclude private identifiers and raw coordinates.
+- Logs and errors use sanitized summaries.
 
 ### Cloud boundary
 
-The free cloud demonstration uses sanitized or synthetic data. Local private data remains the
-authoritative case-study dataset. Free-service filesystems are treated as ephemeral.
+- Cloud demonstration data is synthetic or explicitly sanitized.
+- The cloud database is not the authoritative private store.
+- Raw personal archives are not copied into container images or cloud volumes.
+- Runtime secrets are provided by the platform secret mechanism.
+- Public responses and screenshots are reviewed for identifying content.
 
-## Deployment view
+## Deployment architecture
 
-### Local
+### Local Compose topology
 
 ```mermaid
 flowchart LR
-    Host["Windows host"] --> Compose["Docker Compose"]
-    Compose --> API["API container"]
-    Compose --> DB["PostgreSQL container"]
-    Host --> Private["Ignored private data directory"]
-    Private --> API
+    Browser["Browser :8501"] --> UI["Streamlit container"]
+    UI -->|"Internal HTTP :8000"| API["FastAPI container"]
+    API --> DB[("PostgreSQL container :5432")]
+    Private["Ignored private directory"] --> API
 ```
 
-### Cloud demonstration
+Compose health dependencies are:
+
+1. PostgreSQL becomes healthy.
+2. FastAPI readiness confirms database access.
+3. Streamlit starts after FastAPI is healthy.
+4. Streamlit health confirms its web process is available.
+
+The API and dashboard use the same locked application image with different runtime commands.
+This demonstrates process separation while avoiding duplicate source packages and releases.
+
+### Sanitized cloud topology
 
 ```mermaid
 flowchart LR
-    GitHub["GitHub main branch"] --> CI["GitHub Actions"]
+    GitHub["GitHub main branch"] --> CI["Quality and image build"]
     CI --> Image["Validated application image"]
-    Image --> PaaS["Managed container platform"]
-    PaaS --> API["API service"]
-    PaaS --> DemoDB["Sanitized demonstration database"]
+    Image --> API["Managed FastAPI service"]
+    Image --> UI["Managed Streamlit service"]
+    Browser["Public browser"] --> UI
+    UI --> API
+    API --> DemoDB[("Sanitized managed PostgreSQL")]
+    Seed["Synthetic or sanitized seed dataset"] --> DemoDB
 ```
 
-The provider will be selected before the initial cloud deployment using current pricing,
-service limits, regional availability, database lifecycle, sleep behavior, HTTPS support,
-and the approved operating budget.
+The cloud provider will be selected using current evidence about container support, managed
+PostgreSQL lifecycle, HTTPS, service sleep behavior, regional availability, secrets, logs,
+backup options, and operating cost.
+
+## Quality, testing, and delivery
+
+The continuous-integration contract includes:
+
+- Locked Python 3.12 dependency installation.
+- Ruff formatting and linting.
+- Strict mypy checking.
+- Pytest with branch coverage and a repository-wide minimum.
+- Alembic schema-drift detection.
+- Docker Compose validation.
+- Application-image build.
+
+Test layers include:
+
+- Parser unit tests with sanitized fixtures.
+- Reconciliation and idempotence tests.
+- PostgreSQL model and persistence tests.
+- Deterministic analytical golden tests.
+- API query and endpoint tests.
+- Dashboard client and response-schema tests.
+- Container health and live smoke tests.
+
+Code coverage measures exercised implementation paths. It does not establish physiological,
+statistical, or coaching validity; those require separate methodology and evaluation.
 
 ## Technology rationale
 
-| Technology | Why selected and problem solved | Academic concept | Simpler alternative | Limitation |
+| Technology | Selection purpose | Concept demonstrated | Simpler alternative | Limitation |
 |---|---|---|---|---|
-| Python 3.12 | Shared language for API, parsing, analytics, and ML | Reproducible scientific software | Several scripts with system Python | One process is CPU-bound |
-| `uv` | Fast lockfile-based dependency and interpreter management | Reproducible environments | `venv` and `pip` | Less familiar to some evaluators |
-| FastAPI | Typed REST boundary and generated OpenAPI | Service contracts and validation | Streamlit calling Python directly | Adds an API process |
-| Modular monolith | Clear modules without distributed overhead | Modularity and clean architecture | One large application module | Requires process or module separation for independent scaling |
-| PostgreSQL | Transactions, constraints, relational history, JSONB | Data modeling and persistence | SQLite | Requires a managed service or container |
-| SQLAlchemy | Typed persistence abstraction | ORM and repository patterns | Raw SQL only | Can hide inefficient queries |
-| Alembic | Reproducible schema evolution | Database migration management | Manual SQL changes | Autogeneration requires review |
-| Pandas and NumPy | Batch feature preparation and analytics | Vectorized data processing | Python loops | Memory-bound and not distributed |
-| scikit-learn | Pipelines, baselines, and evaluation | Applied machine learning | Deterministic formula only | Dataset size may limit validity |
-| Streamlit | Fast analytical interface | Data-product prototyping | React | Less frontend control |
-| LangGraph | Explicit state and conditional safety routing | Controlled agent orchestration | Plain function chain | Can become unnecessary ceremony |
-| OpenAI abstraction | Schema-constrained language interpretation | Generative AI integration | Templates only | Cost, privacy, and nondeterminism |
-| Docker Compose | Reproducible local services | Containerization | Manual installation | Not production orchestration |
-| GitHub Actions | Automated quality and build gates | CI/CD | Manual verification | Depends on hosted runners |
-| Managed container platform | Public sanitized deployment | Cloud deployment | Local-only operation | Provider resource and availability constraints |
+| Python 3.12 | Shared language for parsing, analytics, API, UI, and ML | Reproducible scientific software | Independent scripts | CPU-bound work requires process or task separation |
+| `uv` | Interpreter and lockfile-based dependency reproducibility | Environment management | `venv` and `pip` | Less familiar than traditional Python tooling |
+| FastAPI | Typed service contract between presentation and persistence | REST design and validation | Streamlit calling repositories directly | Adds a runtime process and HTTP boundary |
+| PostgreSQL | Transactional canonical history and time-series persistence | Relational modeling and integrity | SQLite | Requires a service or managed database |
+| SQLAlchemy | Typed persistence mappings and transaction services | ORM and repository patterns | Raw SQL | Poorly designed queries can be obscured |
+| Alembic | Versioned and reproducible schema evolution | Migration management | Manual schema changes | Generated migrations require review |
+| Pandas | Dashboard shaping and future feature-dataset preparation | Tabular data processing | Lists and dictionaries | Memory-bound and not distributed |
+| Plotly | Interactive evidence visualization | Analytical presentation | Static charts | Increases image size and client payload |
+| Streamlit | Rapid analytical interface over typed API contracts | Data-product delivery | Custom React client | Less control over frontend architecture |
+| scikit-learn | Planned baselines, pipelines, and temporal evaluation | Applied machine learning | Deterministic formulas only | Dataset size can prevent useful generalization |
+| LangGraph | Planned explicit coaching state and review routing | Controlled agent orchestration | Function pipeline | Adds little value without meaningful branching |
+| OpenAI abstraction | Planned schema-constrained explanation generation | Generative AI integration | Deterministic templates | Cost, privacy, latency, and nondeterminism |
+| Docker Compose | Reproducible local multi-process integration | Containerization | Manual service startup | Not a production orchestrator |
+| GitHub Actions | Automated quality and image-build gates | Continuous integration | Manual verification | Depends on hosted-runner availability |
+| Managed container platform | Sanitized public demonstration | Cloud deployment | Local-only demonstration | Provider limits and pricing can change |
 
-## Technology adoption assessment
+## Data-engineering and Big Data positioning
 
-The baseline architecture selects components that satisfy the current functional,
-data-volume, reliability, privacy, and deployment requirements. The technologies below
-remain valid evolution options. Each has an explicit adoption trigger that can be evaluated
-from measured system needs and recorded in an architecture decision record.
+The platform demonstrates transferable data-engineering capabilities:
+
+- Heterogeneous file ingestion.
+- Schema and unit normalization.
+- Data-quality findings.
+- Source and field lineage.
+- File-level and record-level idempotence.
+- Cross-source entity resolution.
+- Transactional persistence.
+- Schema evolution.
+- Ordered sensor-series processing.
+- Versioned analytical pipelines.
+- Reproducible experiments and containerized delivery.
+
+The current workload is not Big Data scale. One athlete's history fits on one machine and does
+not require distributed storage or computation. The project demonstrates Big Data engineering
+principles without making a false scale claim.
+
+## Evidence-based evolution options
+
+Additional technologies remain valid when their adoption triggers are observed.
 
 ### Kafka
 
-Current imports are bounded batch jobs, and PostgreSQL provides durable job state and
-idempotency. Kafka becomes appropriate when ingestion is continuous, multiple independent
-consumers require replay, or measured throughput and retention requirements exceed the
-database-backed job mechanism.
+PostgreSQL currently provides durable import state and idempotence for bounded batch jobs.
+Kafka becomes appropriate when ingestion is continuous, multiple independent consumers need
+replay, or measured throughput and retention exceed the database-backed job mechanism.
 
 ### Kubernetes
 
-The current topology contains a small number of containerized processes, with Docker Compose
-for local integration and a managed container platform for cloud operation. Kubernetes becomes
-appropriate when autoscaling, multi-service scheduling, portability, self-healing, or platform
-governance requirements justify operating a cluster.
+Docker Compose and a managed container platform currently satisfy the small runtime topology.
+Kubernetes becomes appropriate when autoscaling, multi-service scheduling, portability,
+self-healing, or platform governance justifies operating a cluster.
 
 ### Microservices
 
-The modular monolith preserves explicit domain boundaries while keeping transactions and
-operations cohesive. A module becomes a candidate for independent deployment when ownership,
-release cadence, scaling, security, or fault-isolation requirements differ enough to justify
-network contracts, distributed consistency, and service-level observability.
+The modular monolith preserves domain boundaries with cohesive transactions. A module becomes
+a candidate for independent deployment when ownership, release cadence, scaling, security,
+or fault-isolation requirements justify network contracts and distributed consistency.
 
-### NoSQL
+### Specialized NoSQL or time-series storage
 
-The core data has strong relationships and integrity requirements, while PostgreSQL JSONB
-supports limited source-specific metadata. A specialized NoSQL store becomes appropriate when
-measured access patterns, schema variability, distribution, or write volume cannot be served
-effectively by the relational design.
+PostgreSQL currently serves relational integrity, JSONB metadata, and indexed trackpoints. A
+specialized store becomes appropriate when measured access patterns, distribution, retention,
+or write volume cannot be served effectively by the relational design.
 
 ### RAG and vector storage
 
-The coaching workflow is grounded in structured, versioned analytical evidence. Retrieval
-augmentation becomes appropriate when an approved and versioned knowledge corpus is introduced,
-and only after retrieval relevance, citation accuracy, privacy, and recommendation impact can
-be evaluated.
+The coaching workflow is grounded in structured analytical evidence. Retrieval augmentation
+becomes appropriate only when an approved, versioned knowledge corpus exists and retrieval
+relevance, citation accuracy, privacy, and recommendation impact can be evaluated.
 
-## Big Data positioning
+## Architectural decisions
 
-The system demonstrates transferable data-engineering practices:
+The following decisions are recorded separately and remain authoritative:
 
-- Heterogeneous ingestion.
-- Validation and normalization.
-- Data lineage.
-- Idempotency.
-- Schema evolution.
-- Time-series processing.
-- Feature pipelines.
-- Reproducible experiments.
-- Containerized execution.
+- ADR-0001: Adopt a modular monolith.
+- ADR-0002: Keep raw personal data outside the repository and public cloud demonstration.
 
-It does not demonstrate Big Data scale because one athlete's history fits on one machine and
-does not require distributed storage or computation. This limitation must be stated in the
-report and presentation.
+Future decisions should create or update an ADR when they change persistence, deployment,
+privacy, model evaluation, or external-provider boundaries.
 
 ## Open architectural questions
 
-The following decisions require evidence gathered later:
+- Trackpoint retention and compression based on measured volume and query performance.
+- Final machine-learning target after the performance-label audit.
+- Cloud provider and database lifecycle based on current operational evidence.
+- Whether import processing benefits from a separate cloud runtime process.
+- Authentication and authorization requirements if private multi-athlete access is introduced.
+- Whether a scheduled recalculation process provides value beyond explicit versioned commands.
 
-- Exact Garmin and Strava adapter schemas after safe export inspection.
-- Source precedence for duplicate sensor streams.
-- Trackpoint retention and compression based on actual data volume.
-- Final ML target after the performance-label audit.
-- Exact free cloud provider and database lifecycle.
-- Whether the import worker needs a separate cloud process for the demonstration.
+## Architectural invariants
 
-Each resolved question should create or update an architecture decision record.
+The architecture remains acceptable only while these invariants hold:
+
+1. Raw personal exports and secrets remain outside Git.
+2. Cloud demonstrations use synthetic or explicitly sanitized data.
+3. Deterministic metrics are calculated by versioned code, not an LLM.
+4. Missing sensor evidence is represented explicitly.
+5. Cross-source resolution retains provenance and avoids silent ambiguous matching.
+6. Machine-learning evaluation is chronological and compared with a deterministic baseline.
+7. The dashboard consumes API contracts and does not query PostgreSQL directly.
+8. Public API responses contain no private identifier, filename, credential, or raw coordinate.
+9. New infrastructure is justified by measured technical requirements.
+10. Documentation distinguishes verified implementation from planned capability.
