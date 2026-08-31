@@ -35,6 +35,8 @@ def _running_record() -> dict[str, object]:
         "elapsedDuration": 3_610_000,
         "movingDuration": 3_500_000,
         "distance": 1_000_000,
+        "elevationGain": 21_713,
+        "elevationLoss": 21_050,
         "avgSpeed": 2.8,
         "maxSpeed": 3.2,
         "avgHr": 155,
@@ -80,6 +82,8 @@ def test_running_summary_normalizes_units_and_metrics(
     assert activity.provider_vo2max == 55
     assert activity.provider_aerobic_training_effect == 4
     assert activity.provider_anaerobic_training_effect == 1.5
+    assert activity.elevation_gain_m == 217.13
+    assert activity.elevation_loss_m == 210.5
 
 
 def test_treadmill_and_non_running_types_are_staged(

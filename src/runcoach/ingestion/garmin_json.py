@@ -304,6 +304,16 @@ def parse_garmin_activity_summaries(
                         "distance",
                         100.0,
                     ),
+                    elevation_gain_m=_scaled_number(
+                        record,
+                        "elevationGain",
+                        100.0,
+                    ),
+                    elevation_loss_m=_scaled_number(
+                        record,
+                        "elevationLoss",
+                        100.0,
+                    ),
                     average_speed_mps=_number(
                         record,
                         "avgSpeed",

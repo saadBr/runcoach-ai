@@ -23,6 +23,8 @@ HEADER = [
     "Elapsed Time",
     "Moving Time",
     "Distance",
+    "Elevation Gain",
+    "Elevation Loss",
 ]
 
 
@@ -60,6 +62,8 @@ def test_adapter_preserves_duplicate_header_positions(
                 "3600",
                 "3500",
                 "10000",
+                "217",
+                "210",
             ]
         ],
     )
@@ -77,6 +81,8 @@ def test_adapter_preserves_duplicate_header_positions(
     assert activity.source.source_format is SourceFormat.CSV
     assert activity.source.referenced_file_name == "activities/synthetic.fit.gz"
     assert activity.source.source_row_number == 2
+    assert activity.elevation_gain_m == 217
+    assert activity.elevation_loss_m == 210
 
 
 def test_non_running_row_is_staged_as_other(
@@ -98,6 +104,8 @@ def test_non_running_row_is_staged_as_other(
                 "1800",
                 "1750",
                 "2500",
+                "",
+                "",
             ]
         ],
     )
@@ -128,6 +136,8 @@ def test_malformed_row_is_reported_without_stopping_import(
                 "3600",
                 "3500",
                 "10000",
+                "217",
+                "210",
             ],
             ["malformed"],
         ],

@@ -381,3 +381,17 @@ production implementation.
 - The model does not produce medical diagnoses.
 - Results are validated for the available single-athlete dataset and are not population
   evidence.
+
+## Elevation normalization and weekly aggregation
+
+Elevation gain is normalized before persistence because provider exports use different units:
+
+- Strava activity-summary elevation gain and loss are expressed in metres.
+- Garmin summarized-activity elevation gain and loss are expressed in centimetres and are divided by 100.
+- A calibration audit across 82 matched non-zero activities produced a median raw Garmin-to-Strava ratio of approximately 100.98, supporting this conversion.
+
+After normalization, 129 of 130 canonical running activities contain an elevation-gain value. The remaining activity is a historical summary-only record without elevation evidence.
+
+Weekly elevation is the sum of canonical activity-level elevation gain for runs within each calendar week. A week containing no runs returns `null` rather than manufacturing a measured zero. This distinguishes absence of contributing activities from an activity whose recorded elevation gain is genuinely zero.
+
+The current implementation uses provider activity-summary elevation rather than recalculating ascent from GPS altitude samples. Provider elevation correction, device barometer behavior, GPS noise, and platform-specific smoothing may therefore produce small differences between sources. Canonical source selection and field provenance must remain available when interpreting these totals.

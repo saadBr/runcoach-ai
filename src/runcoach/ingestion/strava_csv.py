@@ -65,6 +65,8 @@ class _Columns:
     elapsed_time: int
     moving_time: int
     distance: int
+    elevation_gain: int
+    elevation_loss: int
 
 
 def _column_index(
@@ -97,6 +99,14 @@ def _resolve_columns(header: list[str]) -> _Columns:
             header,
             "Distance",
             occurrence=2,
+        ),
+        elevation_gain=_column_index(
+            header,
+            "Elevation Gain",
+        ),
+        elevation_loss=_column_index(
+            header,
+            "Elevation Loss",
         ),
     )
 
@@ -251,6 +261,8 @@ def parse_strava_activities_csv(
                         elapsed_time_s=_required_number(row[columns.elapsed_time]),
                         moving_time_s=_optional_number(row[columns.moving_time]),
                         distance_m=_optional_number(row[columns.distance]),
+                        elevation_gain_m=_optional_number(row[columns.elevation_gain]),
+                        elevation_loss_m=_optional_number(row[columns.elevation_loss]),
                     )
                 )
             except (ValueError, ValidationError):
