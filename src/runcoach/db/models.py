@@ -936,3 +936,86 @@ class DailyLoad(Base):
         nullable=False,
         server_default=func.now(),
     )
+
+
+class PersonalBest(Base):
+    """One verified standard-distance personal-best progression event."""
+
+    __tablename__ = "personal_bests"
+    __table_args__ = (
+        CheckConstraint(
+            "distance_m IN (5000, 10000, 21097.5, 42195)",
+            name="personal_bests_standard_distance",
+        ),
+        CheckConstraint(
+            "elapsed_time_ms > 0",
+            name="personal_bests_elapsed_time",
+        ),
+        CheckConstraint(
+            "effort_type IN "
+            "('whole_activity', 'distance_interpolation', "
+            "'rolling_segment', 'provider_best_effort')",
+            name="personal_bests_effort_type",
+        ),
+        CheckConstraint(
+            "verification_status IN "
+            "('verified_race', 'verified_time_trial', 'verified_max_effort')",
+            name="personal_bests_verification_status",
+        ),
+        CheckConstraint(
+            "superseded_at IS NULL OR superseded_at >= achieved_at",
+            name="personal_bests_superseded_after_achievement",
+        ),
+        UniqueConstraint(
+            "activity_id",
+            "distance_m",
+            "elapsed_time_ms",
+            "verification_status",
+            "verification_source",
+            name="uq_personal_bests_evidence",
+        ),
+        Index(
+            "ix_personal_bests_athlete_distance_achieved",
+            "athlete_id",
+            "distance_m",
+            "achieved_at",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        primary_key=True,
+        default=uuid4,
+    )
+    athlete_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("athletes.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    activity_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("activities.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    distance_m: Mapped[Decimal] = mapped_column(
+        Numeric(10, 3),
+        nullable=False,
+    )
+    elapsed_time_ms: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    effort_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    verification_status: Mapped[str] = mapped_column(String(32), nullable=False)
+    verification_source: Mapped[str] = mapped_column(String(64), nullable=False)
+    achieved_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+    )
+    algorithm_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    superseded_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )

@@ -393,21 +393,26 @@ remain separate series unless a documented calibration is implemented.
 
 ### `personal_bests`
 
+One row represents a verified verified standard-distance result that became a personal best.
+
 | Column | Type | Rules |
 |---|---|---|
 | `id` | UUID | Primary key |
-| `athlete_id` | UUID | Foreign key |
-| `activity_id` | UUID | Foreign key |
-| `distance_m` | Numeric | Standard distance |
-| `elapsed_time_ms` | Bigint | Required |
-| `effort_type` | Text | Whole activity or rolling segment |
-| `verification_status` | Text | Required |
-| `achieved_at` | Timestamptz | Required |
-| `algorithm_version` | Text | Required |
-| `superseded_at` | Timestamptz | Nullable |
+| `athlete_id` | UUID | Foreign key to `athletes` |
+| `activity_id` | UUID | Foreign key to the supporting canonical activity |
+| `distance_m` | Numeric | 5K, 10K, half marathon, or marathon |
+| `elapsed_time_ms` | Bigint | Positive verified standard-distance time |
+| `effort_type` | Text | Whole activity, distance interpolation, rolling segment, or provider best effort |
+| `verification_status` | Text | Verified race, time trial, or maximum effort |
+| `verification_source` | Text | Provenance for the verification, such as `strava_best_effort` |
+| `achieved_at` | Timestamptz | Taken from the supporting canonical activity |
+| `algorithm_version` | Text | Required ingestion or calculation version |
+| `superseded_at` | Timestamptz | Nullable; set when a later faster PB is recorded |
+| `created_at` | Timestamptz | Required |
 
-Historical PB rows remain available after a faster result supersedes them.
-
+The evidence fields are unique for one activity and result. Historical PB rows remain
+available after a faster result supersedes them. Provider best-effort values remain
+distinguishable from times calculated by RunCoach AI.
 ### `readiness_snapshots`
 
 | Column | Type | Rules |
