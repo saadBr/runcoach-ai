@@ -8,8 +8,9 @@ The project combines data engineering, applied machine learning, cloud computing
 architecture, and controlled AI-agent orchestration. It applies Big Data engineering
 principles without claiming to operate at genuine Big Data scale.
 
-> Project status: activity ingestion, reconciliation, sensor storage, and deterministic
-> analytics, read-only analytics APIs, and the containerized dashboard are operational.
+> Project status: activity ingestion, reconciliation, sensor storage, deterministic
+> analytics and performance baselines, read-only APIs, and the containerized dashboard are
+> operational.
 
 ## Problem
 
@@ -40,7 +41,7 @@ The target platform includes:
 - Validation, normalization, provenance tracking, and cross-source deduplication.
 - PostgreSQL storage for activities, laps, trackpoints, derived metrics, and model outputs.
 - Deterministic workload, fitness, fatigue, form, personal-best, and race-readiness analysis.
-- A deterministic Riegel race-time baseline.
+- A deterministic Riegel benchmark retained for model evaluation, not user-facing forecasting.
 - A machine-learning experiment selected after auditing the available labels.
 - A Streamlit analytical interface backed by a FastAPI API.
 - A controlled LangGraph coaching workflow that interprets validated evidence.
@@ -65,6 +66,8 @@ The operational data pipeline currently provides:
 - Gap-free daily acute, chronic, fitness, fatigue, and form series.
 - Versioned input hashing and reproducible recalculation.
 - Read-only overview and longitudinal-trends API endpoints.
+- Verified standard-distance personal-best history with auditable evidence links.
+- A leakage-safe private export for reviewing candidate performance labels and training features.
 - A validated Streamlit dashboard with interactive Plotly visualizations.
 - Independent, health-checked API, dashboard, and PostgreSQL Compose services.
 
@@ -264,6 +267,34 @@ calendar weeks are retained so charts preserve the time axis.
 The endpoint exposes calculated aggregates only. It does not return athlete identifiers,
 private filenames, source identifiers, or raw GPS coordinates.
 
+### Verified performance
+
+The performance endpoint returns current verified 5K, 10K, half-marathon, and marathon
+personal bests together with the training-model readiness state:
+
+```powershell
+Invoke-RestMethod 'http://localhost:8000/api/v1/analytics/performance' |
+  ConvertTo-Json -Depth 8
+```
+
+Each personal best includes its activity and evidence identifiers, verification status,
+effort type, source, and algorithm version. Race-time prediction remains unavailable until
+candidate labels are reviewed and a training-feature model passes chronological evaluation.
+The Riegel formula remains in the analytical test suite only as a comparison benchmark.
+
+Export the private performance-review dataset with:
+
+```powershell
+uv run python -m runcoach.cli.export_performance_dataset
+```
+
+The CSV is written to `data/private/ml/performance-label-audit.csv`. It contains candidate
+activity names and identifiers, so the CLI refuses destinations outside the configured
+private-data directory. Each row includes 7-, 28-, 42-, and 84-day training volume, pace,
+elevation, heart-rate availability, duration load, prior workload state, and prior verified
+PB evidence. All features stop strictly before the candidate starts; unreviewed candidates
+have no verified target time.
+
 ## Analytical dashboard
 
 Run the dashboard directly while the API is available at `http://localhost:8000`:
@@ -286,9 +317,12 @@ Local endpoints:
 - FastAPI documentation: `http://localhost:8000/docs`
 - API readiness: `http://localhost:8000/health/ready`
 
-The dashboard consumes validated aggregate API responses. It does not connect directly to
-PostgreSQL, mount the private activity directory, or expose athlete identifiers, source
-filenames, credentials, or raw GPS coordinates.
+The dashboard consumes validated aggregate API responses. Its performance panel displays
+verified personal bests and the current training-model readiness state; it does not publish
+a formula estimate as a race prediction. OpenAI may later explain validated model evidence
+and uncertainty, but numeric predictions remain outputs of versioned, tested code.
+It does not connect directly to PostgreSQL, mount the private activity directory, or expose
+private filenames, credentials, or raw GPS coordinates.
 
 ## Quality checks
 

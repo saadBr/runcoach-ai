@@ -1,12 +1,15 @@
-"""Read-only candidate queries for the verified-performance label audit."""
+"""Read-only candidate and leakage-safe feature queries for performance audits."""
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
+from decimal import Decimal
+from typing import Final
 from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from runcoach.analytics.activity import ACTIVITY_METRICS_VERSION, DURATION_LOAD_METHOD
 from runcoach.analytics.performance import (
     DEFAULT_DISTANCE_TOLERANCE_PCT,
     STANDARD_DISTANCE_AUDIT_VERSION,
@@ -16,7 +19,18 @@ from runcoach.analytics.performance import (
     calculate_standard_distance_effort,
     match_standard_distance,
 )
-from runcoach.db.models import Activity, Athlete, Trackpoint
+from runcoach.analytics.workload import DAILY_LOAD_ALGORITHM_VERSION
+from runcoach.db.models import (
+    Activity,
+    ActivityMetric,
+    Athlete,
+    DailyLoad,
+    PersonalBest,
+    Trackpoint,
+)
+
+PERFORMANCE_FEATURE_DATASET_VERSION: Final = "performance_training_features_v1"
+TRAINING_WINDOWS_DAYS: Final = (7, 28, 42, 84)
 
 
 class PerformanceAuditQueryError(RuntimeError):
@@ -63,24 +77,138 @@ class PerformanceEvidence:
     derived_effort: StandardDistanceEffort | None
 
 
+@dataclass(frozen=True, slots=True)
+class TrainingWindowFeatures:
+    """Aggregate training evidence strictly preceding a candidate performance."""
+
+    days: int
+    runs: int
+    distance_km: float
+    moving_hours: float
+    longest_run_km: float | None
+    weighted_pace_seconds_per_km: float | None
+    elevation_gain_m: float | None
+    activities_with_heart_rate: int
+    duration_load_minutes: float
+
+
+@dataclass(frozen=True, slots=True)
+class PerformanceTrainingRow:
+    """One candidate label paired with time-safe pre-event features."""
+
+    activity_id: UUID
+    activity_name: str | None
+    achieved_at: datetime
+    matched_distance: StandardDistance
+    measured_distance_m: float
+    recorded_elapsed_time_seconds: float
+    distance_deviation_pct: float
+    review_status: str
+    review_label: str | None
+    verified_elapsed_time_seconds: float | None
+    review_notes: str | None
+    prior_history_runs: int
+    prior_history_days: int
+    prior_acute_load: float | None
+    prior_chronic_load: float | None
+    prior_form_index: float | None
+    prior_5k_best_seconds: float | None
+    prior_10k_best_seconds: float | None
+    prior_half_marathon_best_seconds: float | None
+    prior_marathon_best_seconds: float | None
+    training_windows: tuple[TrainingWindowFeatures, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class PerformanceTrainingDataset:
+    """Private review dataset; unreviewed rows are not valid ML labels."""
+
+    dataset_version: str
+    audit_version: str
+    leakage_rule: str
+    candidate_rows: int
+    verified_rows: int
+    unreviewed_rows: int
+    model_status: str
+    rows: tuple[PerformanceTrainingRow, ...]
+
+
+def _utc_datetime(value: datetime) -> datetime:
+    if value.tzinfo is None or value.utcoffset() is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
+
+
+def _optional_float(value: Decimal | None) -> float | None:
+    return float(value) if value is not None else None
+
+
+def _window_features(
+    *,
+    activities: tuple[Activity, ...],
+    metrics_by_activity: dict[UUID, ActivityMetric],
+    candidate: Activity,
+    days: int,
+) -> TrainingWindowFeatures:
+    window_start = candidate.local_start_date - timedelta(days=days)
+    window = tuple(
+        activity
+        for activity in activities
+        if activity.start_time_utc < candidate.start_time_utc
+        and activity.local_start_date >= window_start
+    )
+    distance_m = sum(float(activity.distance_m) for activity in window)
+    moving_time_ms = sum(activity.moving_time_ms for activity in window)
+    elevations = tuple(
+        float(activity.elevation_gain_m)
+        for activity in window
+        if activity.elevation_gain_m is not None
+    )
+    metrics = tuple(
+        metrics_by_activity[activity.id]
+        for activity in window
+        if activity.id in metrics_by_activity
+    )
+
+    return TrainingWindowFeatures(
+        days=days,
+        runs=len(window),
+        distance_km=round(distance_m / 1_000, 6),
+        moving_hours=round(moving_time_ms / 3_600_000, 6),
+        longest_run_km=(
+            round(max(float(activity.distance_m) for activity in window) / 1_000, 6)
+            if window
+            else None
+        ),
+        weighted_pace_seconds_per_km=(
+            round((moving_time_ms / 1_000) / (distance_m / 1_000), 6)
+            if moving_time_ms > 0 and distance_m > 0
+            else None
+        ),
+        elevation_gain_m=round(sum(elevations), 6) if elevations else None,
+        activities_with_heart_rate=sum(metric.heart_rate_coverage_pct > 0 for metric in metrics),
+        duration_load_minutes=round(
+            sum(
+                float(metric.training_load)
+                for metric in metrics
+                if metric.training_load is not None
+            ),
+            6,
+        ),
+    )
+
+
 class PerformanceAuditQueryService:
-    """Read canonical activities and nominate possible verified performances."""
+    """Read canonical activities and build human-review performance evidence."""
 
     def __init__(self, session: Session) -> None:
         self._session = session
 
-    def audit(
-        self,
-        *,
-        athlete_id: UUID,
-        distance_tolerance_pct: float = DEFAULT_DISTANCE_TOLERANCE_PCT,
-    ) -> PerformanceAudit:
-        """Return candidates without changing activity types or verification states."""
-
+    def _eligible_activities(self, athlete_id: UUID) -> tuple[Activity, ...]:
         if self._session.get(Athlete, athlete_id) is None:
             raise PerformanceAuditQueryError("The configured athlete does not exist.")
 
-        activities = tuple(
+        return tuple(
             self._session.scalars(
                 select(Activity)
                 .where(
@@ -90,12 +218,19 @@ class PerformanceAuditQueryService:
                     Activity.distance_m > 0,
                     Activity.elapsed_time_ms > 0,
                 )
-                .order_by(
-                    Activity.start_time_utc,
-                    Activity.id,
-                )
+                .order_by(Activity.start_time_utc, Activity.id)
             )
         )
+
+    def audit(
+        self,
+        *,
+        athlete_id: UUID,
+        distance_tolerance_pct: float = DEFAULT_DISTANCE_TOLERANCE_PCT,
+    ) -> PerformanceAudit:
+        """Return candidates without changing activity types or verification states."""
+
+        activities = self._eligible_activities(athlete_id)
         candidates: list[PerformanceCandidate] = []
 
         for activity in activities:
@@ -111,7 +246,7 @@ class PerformanceAuditQueryService:
             candidates.append(
                 PerformanceCandidate(
                     activity_id=activity.id,
-                    achieved_at=activity.start_time_utc,
+                    achieved_at=_utc_datetime(activity.start_time_utc),
                     measured_distance_m=measured_distance_m,
                     elapsed_time_seconds=elapsed_time_seconds,
                     elapsed_pace_seconds_per_km=round(
@@ -132,6 +267,146 @@ class PerformanceAuditQueryService:
             distance_tolerance_pct=distance_tolerance_pct,
             eligible_activities=len(activities),
             candidates=tuple(candidates),
+        )
+
+    def training_dataset(
+        self,
+        *,
+        athlete_id: UUID,
+        distance_tolerance_pct: float = DEFAULT_DISTANCE_TOLERANCE_PCT,
+    ) -> PerformanceTrainingDataset:
+        """Pair reviewed labels with features calculated strictly before each event."""
+
+        activities = self._eligible_activities(athlete_id)
+        audit = self.audit(
+            athlete_id=athlete_id,
+            distance_tolerance_pct=distance_tolerance_pct,
+        )
+        activities_by_id = {activity.id: activity for activity in activities}
+
+        metrics_by_activity: dict[UUID, ActivityMetric] = {}
+        metrics = self._session.scalars(
+            select(ActivityMetric)
+            .join(Activity, Activity.id == ActivityMetric.activity_id)
+            .where(
+                Activity.athlete_id == athlete_id,
+                ActivityMetric.algorithm_version == ACTIVITY_METRICS_VERSION,
+                ActivityMetric.load_method == DURATION_LOAD_METHOD,
+            )
+            .order_by(ActivityMetric.calculated_at, ActivityMetric.id)
+        )
+        for metric in metrics:
+            metrics_by_activity[metric.activity_id] = metric
+
+        workload_by_date = {
+            workload.local_date: workload
+            for workload in self._session.scalars(
+                select(DailyLoad).where(
+                    DailyLoad.athlete_id == athlete_id,
+                    DailyLoad.load_method == DURATION_LOAD_METHOD,
+                    DailyLoad.algorithm_version == DAILY_LOAD_ALGORITHM_VERSION,
+                )
+            )
+        }
+        personal_bests = tuple(
+            self._session.scalars(
+                select(PersonalBest)
+                .where(PersonalBest.athlete_id == athlete_id)
+                .order_by(PersonalBest.achieved_at, PersonalBest.id)
+            )
+        )
+        verified_by_candidate = {
+            (record.activity_id, float(record.distance_m)): record for record in personal_bests
+        }
+
+        rows: list[PerformanceTrainingRow] = []
+        for candidate in audit.candidates:
+            activity = activities_by_id[candidate.activity_id]
+            prior_activities = tuple(
+                prior for prior in activities if prior.start_time_utc < activity.start_time_utc
+            )
+            previous_day_load = workload_by_date.get(activity.local_start_date - timedelta(days=1))
+            verified = verified_by_candidate.get((activity.id, candidate.official_distance_m))
+            prior_bests: dict[StandardDistance, float] = {}
+            for record in personal_bests:
+                if _utc_datetime(record.achieved_at) >= _utc_datetime(activity.start_time_utc):
+                    continue
+                matched = match_standard_distance(float(record.distance_m), tolerance_pct=0.01)
+                if matched is None:
+                    continue
+                elapsed_seconds = record.elapsed_time_ms / 1_000
+                existing = prior_bests.get(matched.distance)
+                if existing is None or elapsed_seconds < existing:
+                    prior_bests[matched.distance] = elapsed_seconds
+
+            rows.append(
+                PerformanceTrainingRow(
+                    activity_id=activity.id,
+                    activity_name=activity.name,
+                    achieved_at=_utc_datetime(activity.start_time_utc),
+                    matched_distance=candidate.matched_distance,
+                    measured_distance_m=candidate.measured_distance_m,
+                    recorded_elapsed_time_seconds=candidate.elapsed_time_seconds,
+                    distance_deviation_pct=candidate.distance_deviation_pct,
+                    review_status="verified" if verified is not None else "unreviewed",
+                    review_label=(verified.verification_status if verified is not None else None),
+                    verified_elapsed_time_seconds=(
+                        verified.elapsed_time_ms / 1_000 if verified is not None else None
+                    ),
+                    review_notes=None,
+                    prior_history_runs=len(prior_activities),
+                    prior_history_days=(
+                        (activity.local_start_date - prior_activities[0].local_start_date).days
+                        if prior_activities
+                        else 0
+                    ),
+                    prior_acute_load=(
+                        _optional_float(previous_day_load.acute_load)
+                        if previous_day_load is not None
+                        else None
+                    ),
+                    prior_chronic_load=(
+                        _optional_float(previous_day_load.chronic_load)
+                        if previous_day_load is not None
+                        else None
+                    ),
+                    prior_form_index=(
+                        _optional_float(previous_day_load.form_index)
+                        if previous_day_load is not None
+                        else None
+                    ),
+                    prior_5k_best_seconds=prior_bests.get(StandardDistance.FIVE_K),
+                    prior_10k_best_seconds=prior_bests.get(StandardDistance.TEN_K),
+                    prior_half_marathon_best_seconds=prior_bests.get(
+                        StandardDistance.HALF_MARATHON
+                    ),
+                    prior_marathon_best_seconds=prior_bests.get(StandardDistance.MARATHON),
+                    training_windows=tuple(
+                        _window_features(
+                            activities=activities,
+                            metrics_by_activity=metrics_by_activity,
+                            candidate=activity,
+                            days=days,
+                        )
+                        for days in TRAINING_WINDOWS_DAYS
+                    ),
+                )
+            )
+
+        verified_rows = sum(row.review_status == "verified" for row in rows)
+        unreviewed_rows = len(rows) - verified_rows
+        return PerformanceTrainingDataset(
+            dataset_version=PERFORMANCE_FEATURE_DATASET_VERSION,
+            audit_version=audit.audit_version,
+            leakage_rule=(
+                "Only activities before candidate start and workload through the prior local "
+                "date may contribute features."
+            ),
+            candidate_rows=len(rows),
+            verified_rows=verified_rows,
+            unreviewed_rows=unreviewed_rows,
+            model_status=("label_audit_required" if unreviewed_rows else "evaluation_required"),
+            rows=tuple(rows),
         )
 
     def evidence(
@@ -177,13 +452,10 @@ class PerformanceAuditQueryService:
 
         return PerformanceEvidence(
             activity_id=activity.id,
-            achieved_at=activity.start_time_utc,
+            achieved_at=_utc_datetime(activity.start_time_utc),
             recorded_distance_m=float(activity.distance_m),
             recorded_elapsed_time_seconds=activity.elapsed_time_ms / 1_000,
             distance_samples=len(samples),
             target_distance=target_distance,
-            derived_effort=calculate_standard_distance_effort(
-                samples,
-                target_distance,
-            ),
+            derived_effort=calculate_standard_distance_effort(samples, target_distance),
         )

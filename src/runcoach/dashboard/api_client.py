@@ -36,6 +36,11 @@ class RunCoachApiClient:
 
         return self._get_json("/api/v1/analytics/overview")
 
+    def get_performance(self) -> JsonObject:
+        """Return verified personal bests and prediction readiness."""
+
+        return self._get_json("/api/v1/analytics/performance")
+
     def get_trends(
         self,
         *,

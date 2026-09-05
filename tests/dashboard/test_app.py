@@ -13,6 +13,7 @@ from streamlit.testing.v1 import AppTest
 
 from runcoach.dashboard.app import (
     daily_workload_frame,
+    format_duration,
     format_optional,
     format_pace,
     weekly_frame,
@@ -80,6 +81,70 @@ WEEKLY_PAYLOAD = {
     "edwards_trimp": 1155.033,
 }
 
+PERSONAL_BESTS = [
+    {
+        "personal_best_id": "018f0000-0000-7000-8000-000000000020",
+        "activity_id": "018f0000-0000-7000-8000-000000000010",
+        "distance": "5k",
+        "distance_m": 5000.0,
+        "elapsed_time_seconds": 1181.0,
+        "pace_seconds_per_km": 236.2,
+        "achieved_at": "2026-05-15T09:00:00Z",
+        "verification_status": "verified_max_effort",
+        "effort_type": "provider_best_effort",
+        "verification_source": "strava_best_effort",
+        "algorithm_version": "strava_best_effort_import_v1",
+    },
+    {
+        "personal_best_id": "018f0000-0000-7000-8000-000000000021",
+        "activity_id": "018f0000-0000-7000-8000-000000000011",
+        "distance": "10k",
+        "distance_m": 10000.0,
+        "elapsed_time_seconds": 2464.0,
+        "pace_seconds_per_km": 246.4,
+        "achieved_at": "2026-03-29T09:00:00Z",
+        "verification_status": "verified_race",
+        "effort_type": "provider_best_effort",
+        "verification_source": "strava_best_effort",
+        "algorithm_version": "strava_best_effort_import_v1",
+    },
+    {
+        "personal_best_id": "018f0000-0000-7000-8000-000000000022",
+        "activity_id": "018f0000-0000-7000-8000-000000000012",
+        "distance": "half_marathon",
+        "distance_m": 21097.5,
+        "elapsed_time_seconds": 5606.0,
+        "pace_seconds_per_km": 265.715,
+        "achieved_at": "2026-06-28T09:00:00Z",
+        "verification_status": "verified_race",
+        "effort_type": "provider_best_effort",
+        "verification_source": "strava_best_effort",
+        "algorithm_version": "strava_best_effort_import_v1",
+    },
+    {
+        "personal_best_id": "018f0000-0000-7000-8000-000000000023",
+        "activity_id": "018f0000-0000-7000-8000-000000000013",
+        "distance": "marathon",
+        "distance_m": 42195.0,
+        "elapsed_time_seconds": 13266.0,
+        "pace_seconds_per_km": 314.402,
+        "achieved_at": "2026-04-12T09:00:00Z",
+        "verification_status": "verified_race",
+        "effort_type": "provider_best_effort",
+        "verification_source": "strava_best_effort",
+        "algorithm_version": "strava_best_effort_import_v1",
+    },
+]
+
+PERFORMANCE_PAYLOAD = {
+    "personal_bests": PERSONAL_BESTS,
+    "prediction_status": "label_audit_required",
+    "prediction_method": "training_feature_model",
+    "verified_labels": 4,
+    "interpretation_role": "openai_explains_validated_outputs_only",
+    "limitations": ["No training-informed prediction is published before evaluation."],
+}
+
 
 class StubAnalyticsHandler(BaseHTTPRequestHandler):
     """Serve deterministic aggregate responses to the dashboard test."""
@@ -103,6 +168,10 @@ class StubAnalyticsHandler(BaseHTTPRequestHandler):
                     "daily_workload": [WORKLOAD_PAYLOAD],
                 }
             )
+            return
+
+        if request_url.path == "/api/v1/analytics/performance":
+            self._respond(PERFORMANCE_PAYLOAD)
             return
 
         self._respond({"detail": "Not found"}, status=404)
@@ -158,12 +227,17 @@ def test_dashboard_renders_validated_analytics(
         "Current form index",
     ]
     assert app.metric[0].value == "130"
-    assert len(app.tabs) == 3
+    assert len(app.tabs) == 4
     assert [tab.label for tab in app.tabs] == [
         "Training volume",
+        "Performance",
         "Workload and form",
         "Data coverage",
     ]
+    assert "5K" in [metric.label for metric in app.metric]
+    assert "Model status" in [metric.label for metric in app.metric]
+    assert "Verified labels" in [metric.label for metric in app.metric]
+    assert not app.selectbox
     assert app.slider[0].value == 12
 
 
@@ -209,6 +283,8 @@ def test_presentation_helpers_preserve_missing_evidence() -> None:
 
     assert format_pace(341.709) == "5:42 /km"
     assert format_pace(None) == "Unavailable"
+    assert format_duration(1_181) == "19:41"
+    assert format_duration(13_266) == "3:41:06"
     assert format_optional(6.2352, decimals=2) == "6.24"
     assert format_optional(None) == "Unavailable"
     assert weekly.loc[1, "pace_display"] == "Unavailable"

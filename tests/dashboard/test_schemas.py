@@ -3,7 +3,11 @@
 import pytest
 from pydantic import ValidationError
 
-from runcoach.dashboard.schemas import AnalyticsOverview, AnalyticsTrends
+from runcoach.dashboard.schemas import (
+    AnalyticsOverview,
+    AnalyticsTrends,
+    PerformanceOverview,
+)
 
 
 def overview_payload() -> dict[str, object]:
@@ -88,6 +92,34 @@ def trends_payload() -> dict[str, object]:
     }
 
 
+def performance_payload() -> dict[str, object]:
+    """Return representative verified-performance evidence."""
+
+    personal_best_id = "018f0000-0000-7000-8000-000000000020"
+    return {
+        "personal_bests": [
+            {
+                "personal_best_id": personal_best_id,
+                "activity_id": "018f0000-0000-7000-8000-000000000010",
+                "distance": "10k",
+                "distance_m": 10000.0,
+                "elapsed_time_seconds": 2464.0,
+                "pace_seconds_per_km": 246.4,
+                "achieved_at": "2026-03-29T09:00:00Z",
+                "verification_status": "verified_race",
+                "effort_type": "provider_best_effort",
+                "verification_source": "strava_best_effort",
+                "algorithm_version": "strava_best_effort_import_v1",
+            }
+        ],
+        "prediction_status": "label_audit_required",
+        "prediction_method": "training_feature_model",
+        "verified_labels": 1,
+        "interpretation_role": "openai_explains_validated_outputs_only",
+        "limitations": ["No prediction is published before evaluation."],
+    }
+
+
 def test_overview_schema_parses_dates_and_nested_models() -> None:
     overview = AnalyticsOverview.model_validate(overview_payload())
 
@@ -103,6 +135,17 @@ def test_trends_schema_parses_weekly_and_daily_series() -> None:
     assert trends.requested_weeks == 4
     assert trends.weekly_training[0].elevation_gain_m == pytest.approx(459.87)
     assert trends.daily_workload[0].acute_load == pytest.approx(38.5717)
+
+
+def test_performance_schema_parses_evidence_and_model_readiness() -> None:
+    performance = PerformanceOverview.model_validate(performance_payload())
+
+    assert performance.personal_bests[0].distance.value == "10k"
+    assert performance.personal_bests[0].achieved_at.year == 2026
+    assert performance.personal_bests[0].verification_status.value == "verified_race"
+    assert performance.prediction_status == "label_audit_required"
+    assert performance.prediction_method == "training_feature_model"
+    assert performance.verified_labels == 1
 
 
 def test_schema_rejects_unknown_fields() -> None:

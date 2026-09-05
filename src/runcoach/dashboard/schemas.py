@@ -1,8 +1,15 @@
 """Validated API response schemas used by the Streamlit dashboard."""
 
-from datetime import date
+from datetime import date, datetime
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
+
+from runcoach.analytics.performance import (
+    PerformanceEffortType,
+    PerformanceLabel,
+    StandardDistance,
+)
 
 
 class DashboardSchema(BaseModel):
@@ -85,3 +92,30 @@ class AnalyticsTrends(DashboardSchema):
     requested_weeks: int = Field(ge=1, le=52)
     weekly_training: tuple[WeeklyTraining, ...]
     daily_workload: tuple[WorkloadSnapshot, ...]
+
+
+class PersonalBest(DashboardSchema):
+    """One active verified standard-distance personal best."""
+
+    personal_best_id: UUID
+    activity_id: UUID
+    distance: StandardDistance
+    distance_m: float = Field(gt=0)
+    elapsed_time_seconds: float = Field(gt=0)
+    pace_seconds_per_km: float = Field(gt=0)
+    achieved_at: datetime
+    verification_status: PerformanceLabel
+    effort_type: PerformanceEffortType
+    verification_source: str = Field(min_length=1)
+    algorithm_version: str = Field(min_length=1)
+
+
+class PerformanceOverview(DashboardSchema):
+    """Verified personal-best and prediction-readiness response."""
+
+    personal_bests: tuple[PersonalBest, ...] = Field(min_length=1)
+    prediction_status: str = Field(min_length=1)
+    prediction_method: str = Field(min_length=1)
+    verified_labels: int = Field(ge=0)
+    interpretation_role: str = Field(min_length=1)
+    limitations: tuple[str, ...] = Field(min_length=1)

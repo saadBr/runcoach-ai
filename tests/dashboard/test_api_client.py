@@ -53,6 +53,24 @@ def test_overview_uses_normalized_api_url(
     assert captured_requests == [("http://localhost:8000/api/v1/analytics/overview", 3.5)]
 
 
+def test_performance_uses_read_only_analytics_endpoint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured_urls: list[str] = []
+
+    def fake_urlopen(request: Request, timeout: float) -> FakeResponse:
+        del timeout
+        captured_urls.append(request.full_url)
+        return FakeResponse(b'{"personal_bests": [], "prediction_status": "audit"}')
+
+    monkeypatch.setattr(api_client, "urlopen", fake_urlopen)
+
+    result = RunCoachApiClient("http://localhost:8000").get_performance()
+
+    assert result["personal_bests"] == []
+    assert captured_urls == ["http://localhost:8000/api/v1/analytics/performance"]
+
+
 def test_trends_encodes_weeks_and_end_date(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

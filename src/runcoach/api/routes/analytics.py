@@ -1,6 +1,6 @@
 """Read-only deterministic analytics API endpoints."""
 
-from datetime import date
+from datetime import date, datetime
 from typing import Annotated
 from uuid import UUID
 
@@ -8,6 +8,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
 
+from runcoach.analytics.performance import (
+    PerformanceEffortType,
+    PerformanceLabel,
+    StandardDistance,
+)
 from runcoach.config import Settings, get_settings
 from runcoach.db.analytics_queries import (
     AnalyticsQueryError,
@@ -16,6 +21,10 @@ from runcoach.db.analytics_queries import (
 from runcoach.db.analytics_trends import (
     AnalyticsTrendsQueryError,
     AnalyticsTrendsQueryService,
+)
+from runcoach.db.performance_queries import (
+    PerformanceQueryError,
+    PerformanceQueryService,
 )
 from runcoach.db.session import get_db_session
 
@@ -119,6 +128,37 @@ class AnalyticsTrendsResponse(BaseModel):
     daily_workload: tuple[WorkloadSnapshotResponse, ...]
 
 
+class PersonalBestResponse(BaseModel):
+    """One active verified standard-distance personal best."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    personal_best_id: UUID
+    activity_id: UUID
+    distance: StandardDistance
+    distance_m: float
+    elapsed_time_seconds: float
+    pace_seconds_per_km: float
+    achieved_at: datetime
+    verification_status: PerformanceLabel
+    effort_type: PerformanceEffortType
+    verification_source: str
+    algorithm_version: str
+
+
+class PerformanceOverviewResponse(BaseModel):
+    """Verified personal bests and training-model readiness."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    personal_bests: tuple[PersonalBestResponse, ...]
+    prediction_status: str
+    prediction_method: str
+    verified_labels: int
+    interpretation_role: str
+    limitations: tuple[str, ...]
+
+
 def _configured_athlete_id(
     settings: Settings,
 ) -> UUID:
@@ -204,3 +244,28 @@ def analytics_trends(
         ) from error
 
     return AnalyticsTrendsResponse.model_validate(trends)
+
+
+@router.get(
+    "/performance",
+    response_model=PerformanceOverviewResponse,
+)
+def analytics_performance(
+    settings: SettingsDependency,
+    database_session: DatabaseSessionDependency,
+) -> PerformanceOverviewResponse:
+    """Return verified personal bests and honest prediction readiness."""
+
+    athlete_id = _configured_athlete_id(settings)
+
+    try:
+        performance = PerformanceQueryService(database_session).overview(
+            athlete_id=athlete_id,
+        )
+    except PerformanceQueryError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(error),
+        ) from error
+
+    return PerformanceOverviewResponse.model_validate(performance)

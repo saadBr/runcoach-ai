@@ -8,24 +8,36 @@ import plotly.graph_objects as go
 import streamlit as st
 from pydantic import ValidationError
 
+from runcoach.analytics.performance import StandardDistance
 from runcoach.dashboard.api_client import DashboardApiError, RunCoachApiClient
-from runcoach.dashboard.schemas import AnalyticsOverview, AnalyticsTrends
+from runcoach.dashboard.schemas import (
+    AnalyticsOverview,
+    AnalyticsTrends,
+    PerformanceOverview,
+)
 
 DEFAULT_API_URL = "http://localhost:8000"
 CHART_CONFIG = {"displayModeBar": False, "responsive": True}
+DISTANCE_LABELS = {
+    StandardDistance.FIVE_K: "5K",
+    StandardDistance.TEN_K: "10K",
+    StandardDistance.HALF_MARATHON: "Half marathon",
+    StandardDistance.MARATHON: "Marathon",
+}
 
 
 @st.cache_data(ttl=60, show_spinner=False)
 def load_dashboard_data(
     api_url: str,
     weeks: int,
-) -> tuple[AnalyticsOverview, AnalyticsTrends]:
+) -> tuple[AnalyticsOverview, AnalyticsTrends, PerformanceOverview]:
     """Load and validate one consistent dashboard view."""
 
     client = RunCoachApiClient(api_url)
     overview = AnalyticsOverview.model_validate(client.get_overview())
     trends = AnalyticsTrends.model_validate(client.get_trends(weeks=weeks))
-    return overview, trends
+    performance = PerformanceOverview.model_validate(client.get_performance())
+    return overview, trends, performance
 
 
 def format_pace(seconds_per_km: float | None) -> str:
@@ -45,6 +57,24 @@ def format_optional(value: float | None, decimals: int = 1) -> str:
     if value is None:
         return "Unavailable"
     return f"{value:.{decimals}f}"
+
+
+def format_duration(seconds: float) -> str:
+    """Format a positive duration as MM:SS or H:MM:SS."""
+
+    total_seconds = round(seconds)
+    hours, remainder = divmod(total_seconds, 3_600)
+    minutes, remaining_seconds = divmod(remainder, 60)
+
+    if hours:
+        return f"{hours}:{minutes:02d}:{remaining_seconds:02d}"
+    return f"{minutes}:{remaining_seconds:02d}"
+
+
+def distance_label(distance: StandardDistance) -> str:
+    """Return the user-facing label for one supported race distance."""
+
+    return DISTANCE_LABELS[distance]
 
 
 def weekly_frame(trends: AnalyticsTrends) -> pd.DataFrame:
@@ -263,6 +293,57 @@ def render_sensor_coverage(overview: AnalyticsOverview) -> None:
     )
 
 
+def render_performance(performance: PerformanceOverview) -> None:
+    """Render verified PB evidence and an honest prediction-readiness state."""
+
+    st.subheader("Verified personal bests")
+    record_columns = st.columns(len(performance.personal_bests))
+
+    for column, personal_best in zip(
+        record_columns,
+        performance.personal_bests,
+        strict=True,
+    ):
+        column.metric(
+            distance_label(personal_best.distance),
+            format_duration(personal_best.elapsed_time_seconds),
+        )
+        column.caption(
+            f"{personal_best.achieved_at.date().isoformat()} · "
+            f"{personal_best.verification_status.value.replace('_', ' ')}"
+        )
+
+    st.subheader("Training-informed race prediction")
+    st.warning(
+        "Prediction is paused while candidate performances are manually labeled and the "
+        "training-feature model is evaluated chronologically. No formula estimate is shown "
+        "as a race forecast."
+    )
+    status, labels, method = st.columns(3)
+    status.metric("Model status", performance.prediction_status.replace("_", " ").title())
+    labels.metric("Verified labels", str(performance.verified_labels))
+    method.metric("Candidate method", performance.prediction_method.replace("_", " ").title())
+    st.caption(
+        "OpenAI's role is to explain a validated model's evidence, uncertainty, and practical "
+        "meaning. Numeric race times remain the output of versioned, tested code."
+    )
+    st.info(" ".join(performance.limitations))
+    with st.expander("View performance calculation provenance"):
+        st.code(
+            "\n".join(
+                [f"Prediction status: {performance.prediction_status}"]
+                + [f"Candidate method: {performance.prediction_method}"]
+                + [f"Interpretation role: {performance.interpretation_role}"]
+                + [
+                    f"{distance_label(personal_best.distance)} PB evidence: "
+                    f"{personal_best.personal_best_id} ({personal_best.algorithm_version})"
+                    for personal_best in performance.personal_bests
+                ]
+            ),
+            language="text",
+        )
+
+
 def render_weekly_table(frame: pd.DataFrame) -> None:
     """Render a concise auditable weekly data table."""
 
@@ -337,7 +418,7 @@ def main() -> None:
         )
 
     try:
-        overview, trends = load_dashboard_data(api_url, selected_weeks)
+        overview, trends, performance = load_dashboard_data(api_url, selected_weeks)
     except (DashboardApiError, ValidationError, ValueError) as error:
         st.error("Dashboard data could not be loaded.")
         st.caption(str(error))
@@ -373,8 +454,8 @@ def main() -> None:
         f"{stale_days} recovery day(s) after the latest recorded run."
     )
 
-    volume_tab, workload_tab, quality_tab = st.tabs(
-        ["Training volume", "Workload and form", "Data coverage"]
+    volume_tab, performance_tab, workload_tab, quality_tab = st.tabs(
+        ["Training volume", "Performance", "Workload and form", "Data coverage"]
     )
 
     weekly_data = weekly_frame(trends)
@@ -384,6 +465,9 @@ def main() -> None:
         render_weekly_volume(weekly_data)
         with st.expander("View weekly evidence table"):
             render_weekly_table(weekly_data)
+
+    with performance_tab:
+        render_performance(performance)
 
     with workload_tab:
         render_workload(workload_data)

@@ -395,3 +395,49 @@ After normalization, 129 of 130 canonical running activities contain an elevatio
 Weekly elevation is the sum of canonical activity-level elevation gain for runs within each calendar week. A week containing no runs returns `null` rather than manufacturing a measured zero. This distinguishes absence of contributing activities from an activity whose recorded elevation gain is genuinely zero.
 
 The current implementation uses provider activity-summary elevation rather than recalculating ascent from GPS altitude samples. Provider elevation correction, device barometer behavior, GPS noise, and platform-specific smoothing may therefore produce small differences between sources. Canonical source selection and field provenance must remain available when interpreting these totals.
+
+## Verified performance presentation
+
+Current personal bests are stored as verified progression events rather than inferred from
+activity names. Each record identifies its canonical activity, standard distance, elapsed
+time, effort type, verification status, verification source, and algorithm version.
+Superseded records remain stored for historical audit while the analytical view returns only
+the current record for each supported distance.
+
+The deterministic Riegel calculation remains an internal comparison benchmark:
+
+```text
+T2 = T1 * (D2 / D1) ^ 1.06
+```
+
+Its output is retained in unit tests for comparison with chronological machine-learning
+experiments. It is not persisted, exposed by the performance API, or presented in the
+dashboard as a race prediction because it does not use training volume, current workload,
+course, weather, fatigue, or race execution.
+
+## Performance label and feature audit
+
+The private performance dataset nominates whole activities within the configured distance
+tolerance of 5K, 10K, half-marathon, and marathon. A candidate does not become a training
+label merely because its distance matches. Existing verified personal-best evidence
+prefills reviewed rows; every other candidate remains `unreviewed` with an empty verified
+target until human review classifies it.
+
+The feature bundle is versioned as `performance_training_features_v1`. For each candidate it
+calculates 7-, 28-, 42-, and 84-day pre-event aggregates: run count, distance, moving time,
+longest run, weighted pace, elevation gain, heart-rate availability, and duration load. It
+also records the prior day's acute, chronic, and form state and any verified PBs achieved
+before the event.
+
+The leakage boundary is strict: activity features use only activities whose start precedes
+the candidate start, workload state ends on the previous local date, and prior-PB features
+exclude the candidate and all later performances. Unreviewed rows have no verified elapsed
+time and must not enter model fitting or evaluation.
+
+The CSV contains private activity names and identifiers and may only be written below
+`RUNCOACH_PRIVATE_DATA_DIR`. It is a review artifact and must not be committed.
+
+No training-informed prediction is published until the label audit is complete and a
+candidate model beats the deterministic benchmark under chronological evaluation. OpenAI
+may explain the selected model's stored evidence, uncertainty, and limitations, but it does
+not calculate numeric race times or invent measurements.
