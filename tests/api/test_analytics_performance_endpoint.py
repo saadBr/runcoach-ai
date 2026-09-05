@@ -1,12 +1,17 @@
 """Tests for the verified-performance analytics endpoint."""
 
 from collections.abc import Iterator
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from uuid import UUID
 
 import pytest
 from fastapi.testclient import TestClient
 
+from runcoach.analytics.current_fitness import (
+    FitnessMark,
+    TrainingProfile,
+    estimate_current_fitness,
+)
 from runcoach.analytics.performance import (
     PerformanceEffortType,
     PerformanceLabel,
@@ -28,6 +33,32 @@ ACTIVITY_ID = UUID("018f0000-0000-7000-8000-000000000010")
 
 
 def _performance_overview() -> PerformanceOverview:
+    anchor = FitnessMark(
+        distance=StandardDistance.TEN_K,
+        elapsed_time_seconds=2_464.0,
+        achieved_on=date(2026, 3, 29),
+    )
+    training = TrainingProfile(
+        as_of_date=date(2026, 4, 1),
+        runs_28d=20,
+        distance_28d_km=200.0,
+        runs_84d=55,
+        distance_84d_km=550.0,
+        longest_run_84d_km=25.0,
+        classified_sessions_84d=12,
+        quality_sessions_84d=6,
+        runs_168d=80,
+        distance_168d_km=800.0,
+        runs_365d=100,
+        distance_365d_km=1_100.0,
+    )
+    current_fitness = estimate_current_fitness(
+        current_marks=(anchor,),
+        anchor=anchor,
+        prior_anchor=None,
+        training=training,
+        reference_training_by_distance=None,
+    )
     return PerformanceOverview(
         personal_bests=(
             PersonalBestSummary(
@@ -44,11 +75,12 @@ def _performance_overview() -> PerformanceOverview:
                 algorithm_version="strava_best_effort_import_v1",
             ),
         ),
-        prediction_status="label_audit_required",
-        prediction_method="training_feature_model",
+        current_fitness=current_fitness,
+        prediction_status="experimental_not_validated",
+        prediction_method="training_context_fitness_v2",
         verified_labels=1,
         interpretation_role="openai_explains_validated_outputs_only",
-        limitations=("No prediction is published before evaluation.",),
+        limitations=current_fitness.limitations,
     )
 
 
@@ -93,11 +125,16 @@ def test_performance_returns_verified_records_and_model_readiness(
     assert body["personal_bests"][0]["distance"] == "10k"
     assert body["personal_bests"][0]["elapsed_time_seconds"] == 2464.0
     assert body["personal_bests"][0]["verification_status"] == "verified_race"
-    assert body["prediction_status"] == "label_audit_required"
-    assert body["prediction_method"] == "training_feature_model"
+    assert body["prediction_status"] == "experimental_not_validated"
+    assert body["prediction_method"] == "training_context_fitness_v2"
     assert body["verified_labels"] == 1
+    assert body["current_fitness"]["anchor"]["distance"] == "10k"
+    assert body["current_fitness"]["estimates"][0]["fitness_potential_time_seconds"] == 2464.0
+    assert body["current_fitness"]["estimates"][0]["preparation_score"] == 1.0
+    assert body["current_fitness"]["training"]["runs_168d"] == 80
+    assert body["current_fitness"]["training"]["runs_365d"] == 100
     assert body["interpretation_role"] == "openai_explains_validated_outputs_only"
-    assert len(body["limitations"]) == 1
+    assert len(body["limitations"]) == 4
 
 
 def test_performance_query_error_is_returned_as_not_found(

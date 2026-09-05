@@ -49,6 +49,16 @@ WINDOW_COLUMNS = (
     "elevation_gain_m",
     "activities_with_heart_rate",
     "duration_load_minutes",
+    "classified_sessions",
+    "quality_sessions",
+    "easy_sessions",
+    "long_sessions",
+    "progressive_sessions",
+    "tempo_sessions",
+    "hill_sessions",
+    "interval_sessions",
+    "race_sessions",
+    "unclassified_sessions",
 )
 
 
@@ -157,6 +167,16 @@ def _csv_row(
                 f"{prefix}elevation_gain_m": _optional_csv_value(window.elevation_gain_m),
                 f"{prefix}activities_with_heart_rate": (window.activities_with_heart_rate),
                 f"{prefix}duration_load_minutes": window.duration_load_minutes,
+                f"{prefix}classified_sessions": window.classified_sessions,
+                f"{prefix}quality_sessions": window.quality_sessions,
+                f"{prefix}easy_sessions": window.easy_sessions,
+                f"{prefix}long_sessions": window.long_sessions,
+                f"{prefix}progressive_sessions": window.progressive_sessions,
+                f"{prefix}tempo_sessions": window.tempo_sessions,
+                f"{prefix}hill_sessions": window.hill_sessions,
+                f"{prefix}interval_sessions": window.interval_sessions,
+                f"{prefix}race_sessions": window.race_sessions,
+                f"{prefix}unclassified_sessions": window.unclassified_sessions,
             }
         )
     return values

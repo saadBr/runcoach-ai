@@ -176,6 +176,16 @@ when enough observations exist.
 
 ML must be compared with all applicable baselines.
 
+### Experimental training-context checkpoint
+
+`training_context_fitness_v2` is exposed separately from the candidate supervised model. It
+uses the newest verified effort, the context of its containing session, the athlete's own PB
+curve, and changes in target-specific training support. It reports flat-course potential and
+race readiness separately, with preparation scores, ranges, confidence, and 28-, 84-, 168-,
+and 365-day evidence. This produces useful current-fitness output before the label set is large
+enough for a defensible supervised model, but it remains an experimental baseline and must be
+evaluated chronologically against the baselines above.
+
 ## Candidate features
 
 Every feature has an `as_of_time` strictly earlier than the target event start.
@@ -199,7 +209,7 @@ Every feature has an `as_of_time` strictly earlier than the target event start.
 
 ### Training history
 
-For trailing 7-, 28-, and 42-day windows:
+For trailing 7-, 28-, 42-, 84-, 180-, and 365-day windows:
 
 - Running distance.
 - Moving duration.
@@ -213,6 +223,8 @@ For trailing 7-, 28-, and 42-day windows:
 - Chronic load.
 - Modeled form.
 - Training consistency.
+- Explainable counts of easy, long, progressive, tempo, hill, interval, and race sessions.
+- Classified and unclassified title counts so missing labels are not treated as easy runs.
 
 ### Data-quality features
 

@@ -13,6 +13,7 @@ from runcoach.analytics.performance import (
     PerformanceLabel,
     StandardDistance,
 )
+from runcoach.analytics.session_classification import SessionKind
 from runcoach.config import Settings, get_settings
 from runcoach.db.analytics_queries import (
     AnalyticsQueryError,
@@ -146,12 +147,82 @@ class PersonalBestResponse(BaseModel):
     algorithm_version: str
 
 
+class FitnessMarkResponse(BaseModel):
+    """One verified mark anchoring the current-fitness estimate."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    distance: StandardDistance
+    elapsed_time_seconds: float
+    achieved_on: date
+    verification_status: PerformanceLabel
+    effort_type: PerformanceEffortType
+    activity_distance_km: float | None
+    session_kind: SessionKind
+
+
+class FitnessTrainingResponse(BaseModel):
+    """Multi-horizon training evidence used by the estimator."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    as_of_date: date
+    runs_28d: int
+    distance_28d_km: float
+    runs_84d: int
+    distance_84d_km: float
+    longest_run_84d_km: float | None
+    classified_sessions_84d: int
+    quality_sessions_84d: int
+    runs_168d: int
+    distance_168d_km: float
+    runs_365d: int
+    distance_365d_km: float
+
+
+class FitnessEstimateResponse(BaseModel):
+    """One experimental distance estimate and uncertainty interval."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    distance: StandardDistance
+    fitness_potential_time_seconds: float
+    race_readiness_time_seconds: float
+    optimistic_time_seconds: float
+    conservative_time_seconds: float
+    fitness_potential_pace_seconds_per_km: float
+    race_readiness_pace_seconds_per_km: float
+    preparation_score: float
+    confidence: str
+    current_pb_seconds: float
+    improvement_from_pb_seconds: float
+    basis: str
+
+
+class CurrentFitnessResponse(BaseModel):
+    """Versioned current-fitness assessment and its evidence."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    algorithm_version: str
+    status: str
+    as_of_date: date
+    anchor: FitnessMarkResponse
+    prior_anchor: FitnessMarkResponse | None
+    anchor_capacity_factor: float
+    anchor_improvement_factor: float
+    training: FitnessTrainingResponse
+    estimates: tuple[FitnessEstimateResponse, ...]
+    limitations: tuple[str, ...]
+
+
 class PerformanceOverviewResponse(BaseModel):
-    """Verified personal bests and training-model readiness."""
+    """Verified personal bests and an experimental current-fitness estimate."""
 
     model_config = ConfigDict(from_attributes=True)
 
     personal_bests: tuple[PersonalBestResponse, ...]
+    current_fitness: CurrentFitnessResponse
     prediction_status: str
     prediction_method: str
     verified_labels: int
@@ -254,7 +325,7 @@ def analytics_performance(
     settings: SettingsDependency,
     database_session: DatabaseSessionDependency,
 ) -> PerformanceOverviewResponse:
-    """Return verified personal bests and honest prediction readiness."""
+    """Return verified PBs and an auditable experimental fitness estimate."""
 
     athlete_id = _configured_athlete_id(settings)
 

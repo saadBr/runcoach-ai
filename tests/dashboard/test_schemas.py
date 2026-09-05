@@ -96,6 +96,7 @@ def performance_payload() -> dict[str, object]:
     """Return representative verified-performance evidence."""
 
     personal_best_id = "018f0000-0000-7000-8000-000000000020"
+    limitations = ["Experimental estimate; chronological validation is pending."]
     return {
         "personal_bests": [
             {
@@ -112,11 +113,59 @@ def performance_payload() -> dict[str, object]:
                 "algorithm_version": "strava_best_effort_import_v1",
             }
         ],
-        "prediction_status": "label_audit_required",
-        "prediction_method": "training_feature_model",
+        "current_fitness": {
+            "algorithm_version": "training_context_fitness_v2",
+            "status": "experimental_not_validated",
+            "as_of_date": "2026-04-01",
+            "anchor": {
+                "distance": "10k",
+                "elapsed_time_seconds": 2464.0,
+                "achieved_on": "2026-03-29",
+                "verification_status": "verified_race",
+                "effort_type": "whole_activity",
+                "activity_distance_km": 10.0,
+                "session_kind": "race",
+            },
+            "prior_anchor": None,
+            "anchor_capacity_factor": 1.0,
+            "anchor_improvement_factor": 1.0,
+            "training": {
+                "as_of_date": "2026-04-01",
+                "runs_28d": 20,
+                "distance_28d_km": 200.0,
+                "runs_84d": 55,
+                "distance_84d_km": 550.0,
+                "longest_run_84d_km": 25.0,
+                "classified_sessions_84d": 12,
+                "quality_sessions_84d": 6,
+                "runs_168d": 80,
+                "distance_168d_km": 800.0,
+                "runs_365d": 100,
+                "distance_365d_km": 1100.0,
+            },
+            "estimates": [
+                {
+                    "distance": "10k",
+                    "fitness_potential_time_seconds": 2464.0,
+                    "race_readiness_time_seconds": 2464.0,
+                    "optimistic_time_seconds": 2427.04,
+                    "conservative_time_seconds": 2500.96,
+                    "fitness_potential_pace_seconds_per_km": 246.4,
+                    "race_readiness_pace_seconds_per_km": 246.4,
+                    "preparation_score": 1.0,
+                    "confidence": "high",
+                    "current_pb_seconds": 2464.0,
+                    "improvement_from_pb_seconds": 0.0,
+                    "basis": "Newest verified performance at this distance.",
+                }
+            ],
+            "limitations": limitations,
+        },
+        "prediction_status": "experimental_not_validated",
+        "prediction_method": "training_context_fitness_v2",
         "verified_labels": 1,
         "interpretation_role": "openai_explains_validated_outputs_only",
-        "limitations": ["No prediction is published before evaluation."],
+        "limitations": limitations,
     }
 
 
@@ -137,15 +186,17 @@ def test_trends_schema_parses_weekly_and_daily_series() -> None:
     assert trends.daily_workload[0].acute_load == pytest.approx(38.5717)
 
 
-def test_performance_schema_parses_evidence_and_model_readiness() -> None:
+def test_performance_schema_parses_evidence_and_fitness_estimate() -> None:
     performance = PerformanceOverview.model_validate(performance_payload())
 
     assert performance.personal_bests[0].distance.value == "10k"
     assert performance.personal_bests[0].achieved_at.year == 2026
     assert performance.personal_bests[0].verification_status.value == "verified_race"
-    assert performance.prediction_status == "label_audit_required"
-    assert performance.prediction_method == "training_feature_model"
+    assert performance.prediction_status == "experimental_not_validated"
+    assert performance.prediction_method == "training_context_fitness_v2"
     assert performance.verified_labels == 1
+    assert performance.current_fitness.training.runs_365d == 100
+    assert performance.current_fitness.estimates[0].fitness_potential_time_seconds == 2464.0
 
 
 def test_schema_rejects_unknown_fields() -> None:

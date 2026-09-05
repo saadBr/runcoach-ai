@@ -60,6 +60,7 @@ def _add_activity(
     distance_m: str,
     elapsed_time_ms: int,
     verification_status: str = "unverified",
+    name: str = "Synthetic Run",
 ) -> None:
     session.add(
         Activity(
@@ -67,7 +68,7 @@ def _add_activity(
             athlete_id=ATHLETE_ID,
             sport="running",
             activity_type="unknown",
-            name="Synthetic Run",
+            name=name,
             start_time_utc=datetime(2026, 1, activity_number, tzinfo=UTC),
             original_timezone="Africa/Casablanca",
             local_start_date=date(2026, 1, activity_number),
@@ -238,6 +239,7 @@ def test_training_dataset_uses_only_pre_event_evidence(db_session: Session) -> N
         activity_number=10,
         distance_m="12000.000",
         elapsed_time_ms=3_600_000,
+        name="Easy Aerobic Run",
     )
     _add_activity(
         db_session,
@@ -314,7 +316,7 @@ def test_training_dataset_uses_only_pre_event_evidence(db_session: Session) -> N
 
     candidate = next(row for row in dataset.rows if row.activity_id == candidate_id)
     windows = {window.days: window for window in candidate.training_windows}
-    assert dataset.dataset_version == "performance_training_features_v2"
+    assert dataset.dataset_version == "performance_training_features_v3"
     assert dataset.model_status == "evaluation_required"
     assert candidate.review_status == "verified"
     assert candidate.review_label == "verified_max_effort"
@@ -330,6 +332,10 @@ def test_training_dataset_uses_only_pre_event_evidence(db_session: Session) -> N
     assert windows[28].distance_km == 12
     assert windows[28].duration_load_minutes == 60
     assert windows[28].weighted_pace_seconds_per_km == 300
+    assert windows[28].classified_sessions == 1
+    assert windows[28].easy_sessions == 1
+    assert windows[28].quality_sessions == 0
+    assert windows[28].unclassified_sessions == 0
 
 
 def test_training_dataset_keeps_unreviewed_candidates_unlabeled(

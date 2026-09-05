@@ -5,7 +5,7 @@ from collections.abc import Generator
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Thread
-from typing import Any
+from typing import Any, cast
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
@@ -138,11 +138,60 @@ PERSONAL_BESTS = [
 
 PERFORMANCE_PAYLOAD = {
     "personal_bests": PERSONAL_BESTS,
-    "prediction_status": "label_audit_required",
-    "prediction_method": "training_feature_model",
+    "current_fitness": {
+        "algorithm_version": "training_context_fitness_v2",
+        "status": "experimental_not_validated",
+        "as_of_date": "2026-08-27",
+        "anchor": {
+            "distance": "5k",
+            "elapsed_time_seconds": 1181.0,
+            "achieved_on": "2026-05-15",
+            "verification_status": "verified_max_effort",
+            "effort_type": "provider_best_effort",
+            "activity_distance_km": 11.0,
+            "session_kind": "tempo",
+        },
+        "prior_anchor": None,
+        "anchor_capacity_factor": 0.96,
+        "anchor_improvement_factor": 0.96,
+        "training": {
+            "as_of_date": "2026-08-27",
+            "runs_28d": 21,
+            "distance_28d_km": 257.349,
+            "runs_84d": 60,
+            "distance_84d_km": 650.0,
+            "longest_run_84d_km": 28.0,
+            "classified_sessions_84d": 8,
+            "quality_sessions_84d": 5,
+            "runs_168d": 100,
+            "distance_168d_km": 1000.0,
+            "runs_365d": 125,
+            "distance_365d_km": 1320.0,
+        },
+        "estimates": [
+            {
+                "distance": record["distance"],
+                "fitness_potential_time_seconds": record["elapsed_time_seconds"],
+                "race_readiness_time_seconds": record["elapsed_time_seconds"],
+                "optimistic_time_seconds": cast(float, record["elapsed_time_seconds"]) * 0.98,
+                "conservative_time_seconds": cast(float, record["elapsed_time_seconds"]) * 1.02,
+                "fitness_potential_pace_seconds_per_km": record["pace_seconds_per_km"],
+                "race_readiness_pace_seconds_per_km": record["pace_seconds_per_km"],
+                "preparation_score": 1.0,
+                "confidence": "medium",
+                "current_pb_seconds": record["elapsed_time_seconds"],
+                "improvement_from_pb_seconds": 0.0,
+                "basis": "Verified personal performance.",
+            }
+            for record in PERSONAL_BESTS
+        ],
+        "limitations": ["Experimental estimate; chronological validation is pending."],
+    },
+    "prediction_status": "experimental_not_validated",
+    "prediction_method": "training_context_fitness_v2",
     "verified_labels": 4,
     "interpretation_role": "openai_explains_validated_outputs_only",
-    "limitations": ["No training-informed prediction is published before evaluation."],
+    "limitations": ["Experimental estimate; chronological validation is pending."],
 }
 
 
@@ -236,7 +285,8 @@ def test_dashboard_renders_validated_analytics(
     ]
     assert "5K" in [metric.label for metric in app.metric]
     assert "Model status" in [metric.label for metric in app.metric]
-    assert "Verified labels" in [metric.label for metric in app.metric]
+    assert "Current anchor" in [metric.label for metric in app.metric]
+    assert "Training history" in [metric.label for metric in app.metric]
     assert not app.selectbox
     assert app.slider[0].value == 12
 

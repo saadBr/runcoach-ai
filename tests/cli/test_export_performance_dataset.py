@@ -34,8 +34,18 @@ def _dataset() -> PerformanceTrainingDataset:
             elevation_gain_m=250.0,
             activities_with_heart_rate=2,
             duration_load_minutes=180.0,
+            classified_sessions=3,
+            quality_sessions=1,
+            easy_sessions=2,
+            long_sessions=1,
+            progressive_sessions=0,
+            tempo_sessions=1,
+            hill_sessions=0,
+            interval_sessions=0,
+            race_sessions=0,
+            unclassified_sessions=0,
         )
-        for days in (7, 28, 42, 84)
+        for days in (7, 28, 42, 84, 180, 365)
     )
     row = PerformanceTrainingRow(
         activity_id=ATHLETE_ID,
@@ -61,7 +71,7 @@ def _dataset() -> PerformanceTrainingDataset:
         training_windows=windows,
     )
     return PerformanceTrainingDataset(
-        dataset_version="performance_training_features_v1",
+        dataset_version="performance_training_features_v3",
         audit_version="standard_distance_audit_v1",
         leakage_rule="Only earlier evidence is used.",
         candidate_rows=1,
@@ -97,6 +107,7 @@ def test_write_dataset_flattens_all_training_windows(tmp_path: Path) -> None:
     assert rows[0]["review_label"] == "verified_max_effort"
     assert rows[0]["prior_7d_runs"] == "3"
     assert rows[0]["prior_84d_duration_load_minutes"] == "180.0"
+    assert rows[0]["prior_365d_quality_sessions"] == "1"
 
 
 def test_main_exports_under_configured_private_directory(

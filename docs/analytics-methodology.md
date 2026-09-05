@@ -437,11 +437,13 @@ not become a training label merely because its distance matches. Existing verifi
 personal-best evidence prefills reviewed rows; every other candidate remains `unreviewed`
 with an empty verified target until human review classifies it.
 
-The feature bundle is versioned as `performance_training_features_v2`. For each candidate it
-calculates 7-, 28-, 42-, and 84-day pre-event aggregates: run count, distance, moving time,
-longest run, weighted pace, elevation gain, heart-rate availability, and duration load. It
-also records the prior day's acute, chronic, and form state and any verified PBs achieved
-before the event.
+The feature bundle is versioned as `performance_training_features_v3`. For each candidate it
+calculates 7-, 28-, 42-, 84-, 180-, and 365-day pre-event aggregates: run count, distance,
+moving time, longest run, weighted pace, elevation gain, heart-rate availability, duration
+load, and title-derived session counts. Session rules are separately versioned as
+`title_rules_v1`; unrecognized titles remain explicitly unclassified. The dataset also
+records the prior day's acute, chronic, and form state and any verified PBs achieved before
+the event.
 
 The leakage boundary is strict: activity features use only activities whose start precedes
 the candidate start, workload state ends on the previous local date, and prior-PB features
@@ -451,7 +453,37 @@ time and must not enter model fitting or evaluation.
 The CSV contains private activity names and identifiers and may only be written below
 `RUNCOACH_PRIVATE_DATA_DIR`. It is a review artifact and must not be committed.
 
-No training-informed prediction is published until the label audit is complete and a
-candidate model beats the deterministic benchmark under chronological evaluation. OpenAI
-may explain the selected model's stored evidence, uncertainty, and limitations, but it does
-not calculate numeric race times or invent measurements.
+## Experimental current-fitness estimate
+
+The dashboard may expose `training_context_fitness_v2` as an experimental capability and
+readiness estimate while the supervised training model remains under chronological
+evaluation. It is not the Riegel formula and is not presented as a validated race guarantee.
+
+The calculation:
+
+1. Selects the newest active verified PB as the current fitness anchor.
+2. Finds the athlete's best older verified mark at that same distance when available.
+3. Classifies the anchor activity title. When a best-effort segment is embedded inside a
+   substantially longer quality session, applies a bounded four-percent workout-reserve
+   factor. A standalone verified maximum effort receives a smaller bounded reserve; a
+   verified whole-activity race receives none.
+4. Calculates the resulting same-distance capacity improvement factor and applies it to the
+   athlete's active PB at each other distance, preserving the athlete's demonstrated
+   endurance relationship rather than imposing a population exponent.
+5. For each target independently, compares current 84-day volume and longest-run evidence
+   with the training immediately preceding that target's PB. The adjustment is bounded and
+   more sensitive for longer distances.
+6. Reports flat-course fitness potential separately from race readiness. Readiness uses a
+   zero-to-one preparation score built from recent frequency, volume, and longest-run support.
+7. Reports a distance-specific readiness range and confidence. The 28-, 84-, 168-, and
+   365-day histories are returned so recent training is not interpreted in isolation.
+
+Neither output can be slower than the active verified PB. Fitness potential assumes favorable
+conditions and a full effort; readiness can be slower than potential when preparation for the
+target distance is incomplete.
+
+This estimator is useful as an immediately visible, auditable checkpoint. It does not satisfy
+the release gate for the future supervised training-feature model. Chronological evaluation,
+course and weather context, taper state, illness, sleep, and race execution remain absent.
+OpenAI may explain the stored evidence and limitations but does not calculate the numeric
+times or invent measurements.

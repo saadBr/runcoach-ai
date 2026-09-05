@@ -21,6 +21,7 @@ from runcoach.analytics.performance import (
     calculate_standard_distance_effort,
     match_standard_distance,
 )
+from runcoach.analytics.session_classification import SessionKind, classify_session
 from runcoach.analytics.workload import DAILY_LOAD_ALGORITHM_VERSION
 from runcoach.db.models import (
     Activity,
@@ -31,8 +32,8 @@ from runcoach.db.models import (
     Trackpoint,
 )
 
-PERFORMANCE_FEATURE_DATASET_VERSION: Final = "performance_training_features_v2"
-TRAINING_WINDOWS_DAYS: Final = (7, 28, 42, 84)
+PERFORMANCE_FEATURE_DATASET_VERSION: Final = "performance_training_features_v3"
+TRAINING_WINDOWS_DAYS: Final = (7, 28, 42, 84, 180, 365)
 
 
 class PerformanceAuditQueryError(RuntimeError):
@@ -93,6 +94,16 @@ class TrainingWindowFeatures:
     elevation_gain_m: float | None
     activities_with_heart_rate: int
     duration_load_minutes: float
+    classified_sessions: int
+    quality_sessions: int
+    easy_sessions: int
+    long_sessions: int
+    progressive_sessions: int
+    tempo_sessions: int
+    hill_sessions: int
+    interval_sessions: int
+    race_sessions: int
+    unclassified_sessions: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -172,6 +183,10 @@ def _window_features(
         for activity in window
         if activity.id in metrics_by_activity
     )
+    classifications = tuple(classify_session(activity.name) for activity in window)
+
+    def count_tag(tag: SessionKind) -> int:
+        return sum(classification.has_tag(tag) for classification in classifications)
 
     return TrainingWindowFeatures(
         days=days,
@@ -198,6 +213,21 @@ def _window_features(
             ),
             6,
         ),
+        classified_sessions=sum(
+            classification.primary_kind is not SessionKind.UNCLASSIFIED
+            for classification in classifications
+        ),
+        quality_sessions=sum(
+            classification.is_quality_session for classification in classifications
+        ),
+        easy_sessions=count_tag(SessionKind.EASY),
+        long_sessions=count_tag(SessionKind.LONG),
+        progressive_sessions=count_tag(SessionKind.PROGRESSIVE),
+        tempo_sessions=count_tag(SessionKind.TEMPO),
+        hill_sessions=count_tag(SessionKind.HILLS),
+        interval_sessions=count_tag(SessionKind.INTERVALS),
+        race_sessions=count_tag(SessionKind.RACE),
+        unclassified_sessions=count_tag(SessionKind.UNCLASSIFIED),
     )
 
 

@@ -87,25 +87,25 @@ def _seed_personal_bests(session: Session) -> None:
         "verified_race",
         "verified_race",
     )
+    months = (9, 3, 6, 4)
 
-    for index, (
+    for (
         activity_id,
         personal_best_id,
         distance_m,
         elapsed_time_ms,
         label,
-    ) in enumerate(
-        zip(
-            ACTIVITY_IDS,
-            PERSONAL_BEST_IDS,
-            distances,
-            elapsed_times,
-            labels,
-            strict=True,
-        ),
-        start=1,
+        month,
+    ) in zip(
+        ACTIVITY_IDS,
+        PERSONAL_BEST_IDS,
+        distances,
+        elapsed_times,
+        labels,
+        months,
+        strict=True,
     ):
-        activity = _activity(activity_id, month=index)
+        activity = _activity(activity_id, month=month)
         session.add(activity)
         session.add(
             PersonalBest(
@@ -124,7 +124,7 @@ def _seed_personal_bests(session: Session) -> None:
     session.commit()
 
 
-def test_overview_returns_current_records_and_model_readiness(
+def test_overview_returns_current_records_and_fitness_estimates(
     db_session: Session,
 ) -> None:
     _seed_personal_bests(db_session)
@@ -141,12 +141,18 @@ def test_overview_returns_current_records_and_model_readiness(
         13266.0,
     ]
     assert overview.personal_bests[0].pace_seconds_per_km == pytest.approx(236.2)
-    assert overview.prediction_status == "label_audit_required"
-    assert overview.prediction_method == "training_feature_model"
+    assert overview.prediction_status == "experimental_not_validated"
+    assert overview.prediction_method == "training_context_fitness_v2"
     assert overview.verified_labels == 4
     assert overview.interpretation_role == "openai_explains_validated_outputs_only"
-    assert len(overview.limitations) == 3
-    assert "OpenAI" in overview.limitations[1]
+    assert len(overview.limitations) == 4
+    assert overview.current_fitness.anchor.distance is StandardDistance.FIVE_K
+    assert overview.current_fitness.anchor_capacity_factor == 0.985
+    assert overview.current_fitness.training.runs_168d == 3
+    assert overview.current_fitness.training.runs_365d == 4
+    assert [
+        estimate.fitness_potential_time_seconds for estimate in overview.current_fitness.estimates
+    ] == pytest.approx([1163.285, 2427.04, 5521.91, 13067.01])
 
 
 def test_superseded_record_is_not_returned(db_session: Session) -> None:

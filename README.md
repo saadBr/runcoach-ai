@@ -284,7 +284,7 @@ private filenames, source identifiers, or raw GPS coordinates.
 ### Verified performance
 
 The performance endpoint returns current verified 5K, 10K, half-marathon, and marathon
-personal bests together with the training-model readiness state:
+personal bests together with a versioned experimental current-fitness estimate:
 
 ```powershell
 Invoke-RestMethod 'http://localhost:8000/api/v1/analytics/performance' |
@@ -292,9 +292,14 @@ Invoke-RestMethod 'http://localhost:8000/api/v1/analytics/performance' |
 ```
 
 Each personal best includes its activity and evidence identifiers, verification status,
-effort type, source, and algorithm version. Race-time prediction remains unavailable until
-candidate labels are reviewed and a training-feature model passes chronological evaluation.
-The Riegel formula remains in the analytical test suite only as a comparison benchmark.
+effort type, source, and algorithm version. `training_context_fitness_v2` distinguishes
+flat-course fitness potential from distance-specific race readiness. It recognizes when the
+newest verified effort is embedded inside a longer quality session, transfers improvement
+through the athlete's own PB relationships, and compares current training with the training
+before each PB. Readiness then uses recent frequency, volume, and longest-run support. The
+response includes both times, an uncertainty range, preparation score, confidence, and
+calculation evidence. The estimator remains experimental until evaluated chronologically;
+the Riegel formula remains only a comparison benchmark.
 
 Trackpoint evidence can recover exact-distance efforts inside longer sessions, including
 warm-up and cool-down workouts. The evidence query reports both the first crossing from the
@@ -310,10 +315,10 @@ uv run python -m runcoach.cli.export_performance_dataset
 
 The CSV is written to `data/private/ml/performance-label-audit.csv`. It contains candidate
 activity names and identifiers, so the CLI refuses destinations outside the configured
-private-data directory. Each row includes 7-, 28-, 42-, and 84-day training volume, pace,
-elevation, heart-rate availability, duration load, prior workload state, and prior verified
-PB evidence. All features stop strictly before the candidate starts; unreviewed candidates
-have no verified target time.
+private-data directory. Each row includes 7-, 28-, 42-, 84-, 180-, and 365-day training
+volume, pace, elevation, heart-rate availability, duration load, explainable title-derived
+session counts, prior workload state, and prior verified PB evidence. All features stop
+strictly before the candidate starts; unreviewed candidates have no verified target time.
 
 ## Analytical dashboard
 
@@ -338,9 +343,9 @@ Local endpoints:
 - API readiness: `http://localhost:8000/health/ready`
 
 The dashboard consumes validated aggregate API responses. Its performance panel displays
-verified personal bests and the current training-model readiness state; it does not publish
-a formula estimate as a race prediction. OpenAI may later explain validated model evidence
-and uncertainty, but numeric predictions remain outputs of versioned, tested code.
+verified personal bests and the experimental personalized estimates with ranges, confidence,
+and multi-horizon training evidence. OpenAI may later explain model evidence and uncertainty,
+but numeric predictions remain outputs of versioned, tested code.
 It does not connect directly to PostgreSQL, mount the private activity directory, or expose
 private filenames, credentials, or raw GPS coordinates.
 

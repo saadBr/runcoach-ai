@@ -294,7 +294,7 @@ def render_sensor_coverage(overview: AnalyticsOverview) -> None:
 
 
 def render_performance(performance: PerformanceOverview) -> None:
-    """Render verified PB evidence and an honest prediction-readiness state."""
+    """Render verified PB evidence and experimental current-fitness estimates."""
 
     st.subheader("Verified personal bests")
     record_columns = st.columns(len(performance.personal_bests))
@@ -315,14 +315,58 @@ def render_performance(performance: PerformanceOverview) -> None:
 
     st.subheader("Training-informed race prediction")
     st.warning(
-        "Prediction is paused while candidate performances are manually labeled and the "
-        "training-feature model is evaluated chronologically. No formula estimate is shown "
-        "as a race forecast."
+        "Fitness potential estimates what current ability could support on a flat course in "
+        "good conditions. Race readiness also accounts for distance-specific preparation. "
+        "Both remain experimental until chronological validation is complete."
     )
-    status, labels, method = st.columns(3)
-    status.metric("Model status", performance.prediction_status.replace("_", " ").title())
-    labels.metric("Verified labels", str(performance.verified_labels))
-    method.metric("Candidate method", performance.prediction_method.replace("_", " ").title())
+    fitness = performance.current_fitness
+    status, anchor, evidence = st.columns(3)
+    status.metric(
+        "Model status",
+        (
+            "Experimental"
+            if performance.prediction_status == "experimental_not_validated"
+            else performance.prediction_status.replace("_", " ").title()
+        ),
+    )
+    if performance.prediction_status == "experimental_not_validated":
+        status.caption("Chronological validation pending")
+    anchor.metric(
+        "Current anchor",
+        f"{distance_label(fitness.anchor.distance)} · "
+        f"{format_duration(fitness.anchor.elapsed_time_seconds)}",
+    )
+    evidence.metric("Training history", f"{fitness.training.runs_365d} runs / 365 days")
+
+    estimates = pd.DataFrame.from_records(
+        [
+            {
+                "Distance": distance_label(estimate.distance),
+                "Fitness potential": format_duration(estimate.fitness_potential_time_seconds),
+                "Race readiness": format_duration(estimate.race_readiness_time_seconds),
+                "Readiness range": (
+                    f"{format_duration(estimate.optimistic_time_seconds)} to "
+                    f"{format_duration(estimate.conservative_time_seconds)}"
+                ),
+                "Readiness pace": format_pace(estimate.race_readiness_pace_seconds_per_km),
+                "Preparation": f"{estimate.preparation_score:.0%}",
+                "Current PB": format_duration(estimate.current_pb_seconds),
+                "Confidence": estimate.confidence.title(),
+            }
+            for estimate in fitness.estimates
+        ]
+    )
+    st.dataframe(estimates, hide_index=True, width="stretch")
+
+    st.caption(
+        f"Evidence through {fitness.as_of_date.isoformat()}: "
+        f"{fitness.training.distance_28d_km:.1f} km / 28 days, "
+        f"{fitness.training.distance_84d_km:.1f} km / 84 days, "
+        f"{fitness.training.distance_168d_km:.1f} km / 168 days, and "
+        f"{fitness.training.distance_365d_km:.1f} km / 365 days. "
+        f"Longest run in 84 days: "
+        f"{format_optional(fitness.training.longest_run_84d_km)} km."
+    )
     st.caption(
         "OpenAI's role is to explain a validated model's evidence, uncertainty, and practical "
         "meaning. Numeric race times remain the output of versioned, tested code."
@@ -332,7 +376,11 @@ def render_performance(performance: PerformanceOverview) -> None:
         st.code(
             "\n".join(
                 [f"Prediction status: {performance.prediction_status}"]
-                + [f"Candidate method: {performance.prediction_method}"]
+                + [f"Algorithm: {performance.prediction_method}"]
+                + [f"Evidence date: {fitness.as_of_date.isoformat()}"]
+                + [f"Anchor capacity factor: {fitness.anchor_capacity_factor:.6f}"]
+                + [f"Anchor improvement factor: {fitness.anchor_improvement_factor:.6f}"]
+                + [f"Anchor session: {fitness.anchor.session_kind.value}"]
                 + [f"Interpretation role: {performance.interpretation_role}"]
                 + [
                     f"{distance_label(personal_best.distance)} PB evidence: "

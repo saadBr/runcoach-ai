@@ -10,6 +10,7 @@ from runcoach.analytics.performance import (
     PerformanceLabel,
     StandardDistance,
 )
+from runcoach.analytics.session_classification import SessionKind
 
 
 class DashboardSchema(BaseModel):
@@ -110,10 +111,72 @@ class PersonalBest(DashboardSchema):
     algorithm_version: str = Field(min_length=1)
 
 
+class FitnessMark(DashboardSchema):
+    """One verified performance anchoring the estimate."""
+
+    distance: StandardDistance
+    elapsed_time_seconds: float = Field(gt=0)
+    achieved_on: date
+    verification_status: PerformanceLabel
+    effort_type: PerformanceEffortType
+    activity_distance_km: float | None = Field(gt=0)
+    session_kind: SessionKind
+
+
+class FitnessTraining(DashboardSchema):
+    """Multi-horizon training evidence used by the estimate."""
+
+    as_of_date: date
+    runs_28d: int = Field(ge=0)
+    distance_28d_km: float = Field(ge=0)
+    runs_84d: int = Field(ge=0)
+    distance_84d_km: float = Field(ge=0)
+    longest_run_84d_km: float | None = Field(ge=0)
+    classified_sessions_84d: int = Field(ge=0)
+    quality_sessions_84d: int = Field(ge=0)
+    runs_168d: int = Field(ge=0)
+    distance_168d_km: float = Field(ge=0)
+    runs_365d: int = Field(ge=0)
+    distance_365d_km: float = Field(ge=0)
+
+
+class FitnessEstimate(DashboardSchema):
+    """One experimental distance estimate and uncertainty range."""
+
+    distance: StandardDistance
+    fitness_potential_time_seconds: float = Field(gt=0)
+    race_readiness_time_seconds: float = Field(gt=0)
+    optimistic_time_seconds: float = Field(gt=0)
+    conservative_time_seconds: float = Field(gt=0)
+    fitness_potential_pace_seconds_per_km: float = Field(gt=0)
+    race_readiness_pace_seconds_per_km: float = Field(gt=0)
+    preparation_score: float = Field(ge=0, le=1)
+    confidence: str = Field(min_length=1)
+    current_pb_seconds: float = Field(gt=0)
+    improvement_from_pb_seconds: float = Field(ge=0)
+    basis: str = Field(min_length=1)
+
+
+class CurrentFitness(DashboardSchema):
+    """Versioned current-fitness estimate and its inputs."""
+
+    algorithm_version: str = Field(min_length=1)
+    status: str = Field(min_length=1)
+    as_of_date: date
+    anchor: FitnessMark
+    prior_anchor: FitnessMark | None
+    anchor_capacity_factor: float = Field(gt=0, le=1)
+    anchor_improvement_factor: float = Field(gt=0, le=1)
+    training: FitnessTraining
+    estimates: tuple[FitnessEstimate, ...] = Field(min_length=1)
+    limitations: tuple[str, ...] = Field(min_length=1)
+
+
 class PerformanceOverview(DashboardSchema):
-    """Verified personal-best and prediction-readiness response."""
+    """Verified personal-best and current-fitness response."""
 
     personal_bests: tuple[PersonalBest, ...] = Field(min_length=1)
+    current_fitness: CurrentFitness
     prediction_status: str = Field(min_length=1)
     prediction_method: str = Field(min_length=1)
     verified_labels: int = Field(ge=0)
