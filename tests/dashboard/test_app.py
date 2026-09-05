@@ -2,6 +2,7 @@
 
 import json
 from collections.abc import Generator
+from datetime import date
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Thread
@@ -194,6 +195,92 @@ PERFORMANCE_PAYLOAD = {
     "limitations": ["Experimental estimate; chronological validation is pending."],
 }
 
+TRAINING_PLAN_PAYLOAD = {
+    "algorithm_version": "goal_plan_preview_v1",
+    "status": "preview_not_persisted",
+    "as_of_date": "2026-08-27",
+    "plan_start_date": "2026-08-31",
+    "goal": {
+        "distance": "marathon",
+        "race_date": "2026-11-19",
+        "target_time_seconds": 13_266.0,
+        "days_per_week": 6,
+    },
+    "goal_status": "achievable",
+    "weeks_to_race": 12,
+    "fitness_potential_seconds": 12_900.0,
+    "current_readiness_seconds": 13_266.0,
+    "recommended_target_seconds": 13_266.0,
+    "target_gap_seconds": 0.0,
+    "current_preparation_score": 0.92,
+    "recent_weekly_distance_km": 64.337,
+    "first_week": [
+        {
+            "scheduled_date": "2026-08-31",
+            "kind": "easy",
+            "title": "Easy aerobic run",
+            "distance_km": 9.0,
+            "pace": {
+                "faster_seconds_per_km": 306.0,
+                "slower_seconds_per_km": 346.0,
+            },
+            "purpose": "Maintain aerobic frequency.",
+        },
+        {
+            "scheduled_date": "2026-09-01",
+            "kind": "quality",
+            "title": "3 x 4 km at controlled marathon effort",
+            "distance_km": 10.0,
+            "pace": {
+                "faster_seconds_per_km": 309.0,
+                "slower_seconds_per_km": 319.0,
+            },
+            "purpose": "Develop marathon durability.",
+        },
+        {
+            "scheduled_date": "2026-09-06",
+            "kind": "long",
+            "title": "Long aerobic run",
+            "distance_km": 19.0,
+            "pace": {
+                "faster_seconds_per_km": 291.0,
+                "slower_seconds_per_km": 331.0,
+            },
+            "purpose": "Build aerobic durability.",
+        },
+    ],
+    "weekly_outline": [
+        {
+            "week_number": 1,
+            "start_date": "2026-08-31",
+            "end_date": "2026-09-06",
+            "phase": "base",
+            "target_distance_km": 59.2,
+            "long_run_km": 19.0,
+            "quality_focus": "marathon pace and fueling durability",
+        },
+        {
+            "week_number": 2,
+            "start_date": "2026-09-07",
+            "end_date": "2026-09-13",
+            "phase": "base",
+            "target_distance_km": 61.3,
+            "long_run_km": 19.6,
+            "quality_focus": "marathon pace and fueling durability",
+        },
+    ],
+    "rationale": ["The plan uses current fitness and recent volume."],
+    "guardrails": ["Keep easy days conversational."],
+}
+
+PERSISTED_TRAINING_PLAN_PAYLOAD = {
+    "goal_id": "018f0000-0000-7000-8000-000000000030",
+    "plan_id": "018f0000-0000-7000-8000-000000000031",
+    "version": 1,
+    "created": True,
+    "preview": TRAINING_PLAN_PAYLOAD,
+}
+
 
 class StubAnalyticsHandler(BaseHTTPRequestHandler):
     """Serve deterministic aggregate responses to the dashboard test."""
@@ -223,6 +310,20 @@ class StubAnalyticsHandler(BaseHTTPRequestHandler):
             self._respond(PERFORMANCE_PAYLOAD)
             return
 
+        if request_url.path == "/api/v1/coaching/plan-preview":
+            self._respond(TRAINING_PLAN_PAYLOAD)
+            return
+
+        self._respond({"detail": "Not found"}, status=404)
+
+    def do_POST(self) -> None:
+        request_url = urlsplit(self.path)
+        if request_url.path in {
+            "/api/v1/coaching/plans/active",
+            "/api/v1/coaching/plans/active/refresh",
+        }:
+            self._respond(PERSISTED_TRAINING_PLAN_PAYLOAD)
+            return
         self._respond({"detail": "Not found"}, status=404)
 
     def _respond(self, payload: object, status: int = 200) -> None:
@@ -276,10 +377,11 @@ def test_dashboard_renders_validated_analytics(
         "Current form index",
     ]
     assert app.metric[0].value == "130"
-    assert len(app.tabs) == 4
+    assert len(app.tabs) == 5
     assert [tab.label for tab in app.tabs] == [
         "Training volume",
         "Performance",
+        "Training plan",
         "Workload and form",
         "Data coverage",
     ]
@@ -287,8 +389,14 @@ def test_dashboard_renders_validated_analytics(
     assert "Model status" in [metric.label for metric in app.metric]
     assert "Current anchor" in [metric.label for metric in app.metric]
     assert "Training history" in [metric.label for metric in app.metric]
-    assert not app.selectbox
-    assert app.slider[0].value == 12
+    assert "Goal assessment" in [metric.label for metric in app.metric]
+    assert app.selectbox[0].value == "marathon"
+    race_date_input = next(widget for widget in app.date_input if widget.label == "Race date")
+    assert race_date_input.value == date(2027, 1, 31)
+    assert race_date_input.max == date(2027, 8, 26)
+    sliders = {slider.label: slider.value for slider in app.slider}
+    assert sliders["Training history"] == 12
+    assert sliders["Running days per week"] == 6
 
 
 def test_history_slider_reruns_dashboard(
@@ -296,12 +404,25 @@ def test_history_slider_reruns_dashboard(
 ) -> None:
     app = AppTest.from_file(APP_PATH, default_timeout=30).run()
 
-    app.slider[0].set_value(4).run()
+    history_slider = next(slider for slider in app.slider if slider.label == "Training history")
+    history_slider.set_value(4).run()
 
     assert dashboard_api is None
     assert not app.exception
-    assert app.slider[0].value == 4
+    sliders = {slider.label: slider.value for slider in app.slider}
+    assert sliders["Training history"] == 4
     assert app.metric[1].value == "1,376.1 km"
+
+
+def test_training_plan_can_be_persisted_from_dashboard(dashboard_api: None) -> None:
+    app = AppTest.from_file(APP_PATH, default_timeout=30).run()
+
+    save_button = next(button for button in app.button if button.label == "Save as active plan")
+    save_button.click().run()
+
+    assert dashboard_api is None
+    assert not app.exception
+    assert "Active plan v1 created and saved." in [message.value for message in app.success]
 
 
 def test_presentation_helpers_preserve_missing_evidence() -> None:

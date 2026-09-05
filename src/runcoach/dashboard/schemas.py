@@ -11,6 +11,11 @@ from runcoach.analytics.performance import (
     StandardDistance,
 )
 from runcoach.analytics.session_classification import SessionKind
+from runcoach.analytics.training_plan import (
+    GoalStatus,
+    PlannedSessionKind,
+    PlanPhase,
+)
 
 
 class DashboardSchema(BaseModel):
@@ -182,3 +187,74 @@ class PerformanceOverview(DashboardSchema):
     verified_labels: int = Field(ge=0)
     interpretation_role: str = Field(min_length=1)
     limitations: tuple[str, ...] = Field(min_length=1)
+
+
+class TrainingGoal(DashboardSchema):
+    """Goal parameters used to create a plan preview."""
+
+    distance: StandardDistance
+    race_date: date
+    target_time_seconds: float | None = Field(gt=0)
+    days_per_week: int = Field(ge=3, le=7)
+
+
+class PaceRange(DashboardSchema):
+    """Inclusive pace guidance in seconds per kilometre."""
+
+    faster_seconds_per_km: float = Field(gt=0)
+    slower_seconds_per_km: float = Field(gt=0)
+
+
+class PlannedSession(DashboardSchema):
+    """One scheduled session in the first plan week."""
+
+    scheduled_date: date
+    kind: PlannedSessionKind
+    title: str = Field(min_length=1)
+    distance_km: float = Field(ge=0)
+    pace: PaceRange | None
+    purpose: str = Field(min_length=1)
+
+
+class PlannedWeek(DashboardSchema):
+    """One week in the progressive plan outline."""
+
+    week_number: int = Field(ge=1)
+    start_date: date
+    end_date: date
+    phase: PlanPhase
+    target_distance_km: float = Field(ge=0)
+    long_run_km: float = Field(ge=0)
+    quality_focus: str = Field(min_length=1)
+
+
+class TrainingPlanPreview(DashboardSchema):
+    """Goal assessment and progressive plan preview."""
+
+    algorithm_version: str = Field(min_length=1)
+    status: str = Field(min_length=1)
+    as_of_date: date
+    plan_start_date: date
+    goal: TrainingGoal
+    goal_status: GoalStatus
+    weeks_to_race: int = Field(ge=2, le=52)
+    fitness_potential_seconds: float = Field(gt=0)
+    current_readiness_seconds: float = Field(gt=0)
+    recommended_target_seconds: float = Field(gt=0)
+    target_gap_seconds: float | None
+    current_preparation_score: float = Field(ge=0, le=1)
+    recent_weekly_distance_km: float = Field(gt=0)
+    first_week: tuple[PlannedSession, ...] = Field(min_length=3, max_length=7)
+    weekly_outline: tuple[PlannedWeek, ...] = Field(min_length=2, max_length=52)
+    rationale: tuple[str, ...] = Field(min_length=1)
+    guardrails: tuple[str, ...] = Field(min_length=1)
+
+
+class PersistedTrainingPlan(DashboardSchema):
+    """The active durable plan version returned by the coaching API."""
+
+    goal_id: UUID
+    plan_id: UUID
+    version: int = Field(ge=1)
+    created: bool
+    preview: TrainingPlanPreview

@@ -84,15 +84,16 @@ The verified implementation currently provides:
 - Versioned input hashing and reproducible recalculation.
 - Read-only analytics overview and longitudinal trend endpoints.
 - A validated Streamlit dashboard using FastAPI rather than direct database access.
+- Training-context race-performance estimates with explicit uncertainty and preparation.
+- A goal-based training planner with progressive weekly load, dated sessions, durable goals,
+  and immutable refreshable plan versions.
 - Health-checked PostgreSQL, FastAPI, and Streamlit Compose services.
 
 ### Planned capabilities
 
 The following remain planned and require their own implementation and validation evidence:
 
-- Personal-best and rolling-segment detection.
-- Deterministic Riegel race-performance estimates.
-- Goal and race-readiness snapshots.
+- Completed-session adherence and automatic schedule adaptation.
 - A machine-learning experiment selected after a label audit.
 - Controlled LangGraph coaching orchestration.
 - Provider-neutral language-model integration.
@@ -410,7 +411,12 @@ parameters, baseline results, candidate-model results, limitations, and conclusi
 
 ## Coaching and LLM boundary
 
-The coaching workflow is planned as a controlled graph over structured evidence.
+The deterministic planning path is operational: it combines current fitness, recent training
+volume, target-distance preparation, race date, target time, and available running days without
+calling an LLM. Selected goals and generated plans can be persisted as immutable versioned
+snapshots. Refreshing after new imports reuses an identical plan or supersedes it with a new
+version when the evidence-derived output changes. Completed-session adherence and the
+conversational coaching workflow remain planned as controlled layers over structured evidence.
 
 ```mermaid
 flowchart LR

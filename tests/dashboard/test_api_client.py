@@ -71,6 +71,88 @@ def test_performance_uses_read_only_analytics_endpoint(
     assert captured_urls == ["http://localhost:8000/api/v1/analytics/performance"]
 
 
+def test_training_plan_encodes_goal_parameters(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured_urls: list[str] = []
+
+    def fake_urlopen(request: Request, timeout: float) -> FakeResponse:
+        del timeout
+        captured_urls.append(request.full_url)
+        return FakeResponse(b'{"algorithm_version": "goal_plan_preview_v1"}')
+
+    monkeypatch.setattr(api_client, "urlopen", fake_urlopen)
+
+    result = RunCoachApiClient("http://localhost:8000").get_training_plan(
+        distance="marathon",
+        race_date=date(2026, 11, 29),
+        target_time_seconds=11_400,
+        days_per_week=6,
+    )
+
+    assert result["algorithm_version"] == "goal_plan_preview_v1"
+    assert captured_urls == [
+        "http://localhost:8000/api/v1/coaching/plan-preview?"
+        "distance=marathon&race_date=2026-11-29&days_per_week=6&"
+        "target_time_seconds=11400"
+    ]
+
+
+def test_training_plan_mutations_use_versioned_coaching_endpoints(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured_requests: list[tuple[str, str]] = []
+
+    def fake_urlopen(request: Request, timeout: float) -> FakeResponse:
+        del timeout
+        captured_requests.append((request.full_url, request.get_method()))
+        return FakeResponse(b'{"version": 1}')
+
+    monkeypatch.setattr(api_client, "urlopen", fake_urlopen)
+    client = RunCoachApiClient("http://localhost:8000")
+
+    saved = client.save_training_plan(
+        distance="marathon",
+        race_date=date(2027, 1, 31),
+        target_time_seconds=11_400,
+        days_per_week=6,
+    )
+    active = client.get_active_training_plan()
+    refreshed = client.refresh_active_training_plan()
+
+    assert saved["version"] == 1
+    assert active["version"] == 1
+    assert refreshed["version"] == 1
+    assert captured_requests == [
+        (
+            "http://localhost:8000/api/v1/coaching/plans/active?"
+            "distance=marathon&race_date=2027-01-31&days_per_week=6&"
+            "target_time_seconds=11400",
+            "POST",
+        ),
+        ("http://localhost:8000/api/v1/coaching/plans/active", "GET"),
+        ("http://localhost:8000/api/v1/coaching/plans/active/refresh", "POST"),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("target_time_seconds", "days_per_week", "message"),
+    ((0.0, 5, "greater than zero"), (None, 2, "between three and seven")),
+)
+def test_training_plan_rejects_invalid_controls(
+    target_time_seconds: float | None,
+    days_per_week: int,
+    message: str,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        RunCoachApiClient("http://localhost:8000").get_training_plan(
+            distance="5k",
+            race_date=date(2026, 11, 29),
+            target_time_seconds=target_time_seconds,
+            days_per_week=days_per_week,
+        )
+
+
 def test_trends_encodes_weeks_and_end_date(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

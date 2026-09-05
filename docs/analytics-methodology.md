@@ -487,3 +487,32 @@ the release gate for the future supervised training-feature model. Chronological
 course and weather context, taper state, illness, sleep, and race execution remain absent.
 OpenAI may explain the stored evidence and limitations but does not calculate the numeric
 times or invent measurements.
+
+## Goal-based training-plan preview
+
+`goal_plan_preview_v1` turns one selected race distance, race date, optional target time, and
+weekly running frequency into a read-only plan preview. It consumes the versioned
+`training_context_fitness_v2` result rather than recalculating performance independently.
+
+The method:
+
+1. Requires between two and 52 weeks before race day.
+2. Classifies the requested target as fitness-based, achievable, challenging, or aggressive
+   relative to current potential, readiness, and available preparation time.
+3. Uses trailing 28-day volume as the starting load, reduced when the selected running-day
+   count is lower than recent frequency.
+4. Starts the first week below that adjusted baseline, limits normal build steps to 3.5
+   percent, inserts a cutback every fourth week, and tapers before race week.
+5. Selects target-specific quality and long-run emphasis. Marathon long runs progress from
+   32 percent of weekly volume in the base phase to 35 percent in build and 38 percent in the
+   specific phase, with a 35 km ceiling. Other distances retain their target-specific shares
+   and ceilings. Easy and recovery volume absorbs the remaining weekly load.
+6. Derives transparent pace ranges from current 5K capacity and target-distance readiness.
+
+The selected goal and generated preview can now be stored as an immutable active plan version.
+Refreshing with identical evidence is idempotent; changed training evidence creates a new
+version and supersedes the prior snapshot without deleting it. The plan does not yet observe
+completed sessions, reschedule missed work, or react to pain, illness, sleep, weather, or
+unexpected fatigue. Those require adherence evidence and a controlled coaching workflow. The
+generated guardrails prohibit compensating for missed hard sessions and state
+that the output is not medical advice.

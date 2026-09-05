@@ -1,6 +1,7 @@
 """Streamlit analytical dashboard backed exclusively by the RunCoach API."""
 
 import os
+from datetime import date, timedelta
 
 import pandas as pd
 import plotly.express as px
@@ -14,6 +15,8 @@ from runcoach.dashboard.schemas import (
     AnalyticsOverview,
     AnalyticsTrends,
     PerformanceOverview,
+    PersistedTrainingPlan,
+    TrainingPlanPreview,
 )
 
 DEFAULT_API_URL = "http://localhost:8000"
@@ -24,6 +27,8 @@ DISTANCE_LABELS = {
     StandardDistance.HALF_MARATHON: "Half marathon",
     StandardDistance.MARATHON: "Marathon",
 }
+
+NEXT_MARATHON_DATE = date(2027, 1, 31)
 
 
 @st.cache_data(ttl=60, show_spinner=False)
@@ -38,6 +43,50 @@ def load_dashboard_data(
     trends = AnalyticsTrends.model_validate(client.get_trends(weeks=weeks))
     performance = PerformanceOverview.model_validate(client.get_performance())
     return overview, trends, performance
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def load_training_plan(
+    api_url: str,
+    distance: StandardDistance,
+    race_date: date,
+    target_time_seconds: float | None,
+    days_per_week: int,
+) -> TrainingPlanPreview:
+    """Load and validate a goal-based training-plan preview."""
+
+    payload = RunCoachApiClient(api_url).get_training_plan(
+        distance=distance.value,
+        race_date=race_date,
+        target_time_seconds=target_time_seconds,
+        days_per_week=days_per_week,
+    )
+    return TrainingPlanPreview.model_validate(payload)
+
+
+def save_training_plan(
+    api_url: str,
+    distance: StandardDistance,
+    race_date: date,
+    target_time_seconds: float | None,
+    days_per_week: int,
+) -> PersistedTrainingPlan:
+    """Persist the selected goal and activate its generated plan."""
+
+    payload = RunCoachApiClient(api_url).save_training_plan(
+        distance=distance.value,
+        race_date=race_date,
+        target_time_seconds=target_time_seconds,
+        days_per_week=days_per_week,
+    )
+    return PersistedTrainingPlan.model_validate(payload)
+
+
+def refresh_active_training_plan(api_url: str) -> PersistedTrainingPlan:
+    """Refresh the active plan from the latest imported activity evidence."""
+
+    payload = RunCoachApiClient(api_url).refresh_active_training_plan()
+    return PersistedTrainingPlan.model_validate(payload)
 
 
 def format_pace(seconds_per_km: float | None) -> str:
@@ -69,6 +118,31 @@ def format_duration(seconds: float) -> str:
     if hours:
         return f"{hours}:{minutes:02d}:{remaining_seconds:02d}"
     return f"{minutes}:{remaining_seconds:02d}"
+
+
+def parse_duration(value: str) -> float:
+    """Parse M:SS or H:MM:SS user input into seconds."""
+
+    parts = value.strip().split(":")
+    if len(parts) not in {2, 3}:
+        raise ValueError("Target time must use M:SS or H:MM:SS.")
+    try:
+        numbers = tuple(int(part) for part in parts)
+    except ValueError as error:
+        raise ValueError("Target time must contain only whole numbers.") from error
+    if any(number < 0 for number in numbers) or numbers[-1] >= 60:
+        raise ValueError("Target time contains an invalid value.")
+    if len(numbers) == 3:
+        hours, minutes, seconds = numbers
+        if minutes >= 60:
+            raise ValueError("Target time contains an invalid value.")
+    else:
+        hours = 0
+        minutes, seconds = numbers
+    total_seconds = hours * 3_600 + minutes * 60 + seconds
+    if total_seconds <= 0:
+        raise ValueError("Target time must be greater than zero.")
+    return float(total_seconds)
 
 
 def distance_label(distance: StandardDistance) -> str:
@@ -428,6 +502,79 @@ def render_weekly_table(frame: pd.DataFrame) -> None:
     )
 
 
+def render_training_plan(plan: TrainingPlanPreview) -> None:
+    """Render one goal assessment, first week, and full progression outline."""
+
+    st.subheader("Personalized training-plan preview")
+    st.caption(
+        "The preview is recalculated from current fitness and training evidence whenever "
+        "you change the goal. Save it to retain an auditable plan that can be refreshed "
+        "after new activities are imported."
+    )
+    status, readiness, target, horizon = st.columns(4)
+    status.metric("Goal assessment", plan.goal_status.value.replace("_", " ").title())
+    readiness.metric("Current readiness", format_duration(plan.current_readiness_seconds))
+    target.metric("Recommended target", format_duration(plan.recommended_target_seconds))
+    horizon.metric("Plan horizon", f"{plan.weeks_to_race} weeks")
+
+    st.markdown("#### First training week")
+    first_week = pd.DataFrame.from_records(
+        [
+            {
+                "Date": session.scheduled_date,
+                "Session": session.title,
+                "Type": session.kind.value.title(),
+                "Distance": f"{session.distance_km:.1f} km",
+                "Pace": (
+                    "Unavailable"
+                    if session.pace is None
+                    else (
+                        f"{format_pace(session.pace.faster_seconds_per_km)} to "
+                        f"{format_pace(session.pace.slower_seconds_per_km)}"
+                    )
+                ),
+                "Purpose": session.purpose,
+            }
+            for session in plan.first_week
+        ]
+    )
+    st.dataframe(first_week, hide_index=True, width="stretch")
+
+    st.markdown("#### Weekly progression")
+    outline = pd.DataFrame.from_records(
+        [
+            {
+                "Week": week.week_number,
+                "Start": week.start_date,
+                "End": week.end_date,
+                "Phase": week.phase.value.title(),
+                "Target distance": f"{week.target_distance_km:.1f} km",
+                "Long run": f"{week.long_run_km:.1f} km",
+                "Quality focus": week.quality_focus,
+            }
+            for week in plan.weekly_outline
+        ]
+    )
+    st.dataframe(outline, hide_index=True, width="stretch")
+
+    st.info(" ".join(plan.rationale))
+    st.warning("Guardrails: " + " ".join(plan.guardrails))
+    with st.expander("View plan provenance"):
+        st.code(
+            "\n".join(
+                (
+                    f"Algorithm: {plan.algorithm_version}",
+                    f"Evidence date: {plan.as_of_date.isoformat()}",
+                    f"Plan start: {plan.plan_start_date.isoformat()}",
+                    f"Recent weekly distance: {plan.recent_weekly_distance_km:.1f} km",
+                    f"Preparation score: {plan.current_preparation_score:.3f}",
+                    f"Preview status: {plan.status}",
+                )
+            ),
+            language="text",
+        )
+
+
 def main() -> None:
     """Render the RunCoach dashboard."""
 
@@ -502,8 +649,14 @@ def main() -> None:
         f"{stale_days} recovery day(s) after the latest recorded run."
     )
 
-    volume_tab, performance_tab, workload_tab, quality_tab = st.tabs(
-        ["Training volume", "Performance", "Workload and form", "Data coverage"]
+    volume_tab, performance_tab, plan_tab, workload_tab, quality_tab = st.tabs(
+        [
+            "Training volume",
+            "Performance",
+            "Training plan",
+            "Workload and form",
+            "Data coverage",
+        ]
     )
 
     weekly_data = weekly_frame(trends)
@@ -516,6 +669,96 @@ def main() -> None:
 
     with performance_tab:
         render_performance(performance)
+
+    with plan_tab:
+        st.subheader("Choose a race goal")
+        goal_distance = st.selectbox(
+            "Race distance",
+            options=tuple(StandardDistance),
+            index=3,
+            format_func=distance_label,
+        )
+        goal_estimate = next(
+            estimate
+            for estimate in performance.current_fitness.estimates
+            if estimate.distance is goal_distance
+        )
+        earliest_goal_date = performance.current_fitness.as_of_date + timedelta(days=21)
+        latest_goal_date = performance.current_fitness.as_of_date + timedelta(days=364)
+        default_goal_date = performance.current_fitness.as_of_date + timedelta(weeks=12)
+        if (
+            goal_distance is StandardDistance.MARATHON
+            and earliest_goal_date <= NEXT_MARATHON_DATE <= latest_goal_date
+        ):
+            default_goal_date = NEXT_MARATHON_DATE
+        goal_columns = st.columns(3)
+        with goal_columns[0]:
+            goal_date = st.date_input(
+                "Race date",
+                value=default_goal_date,
+                min_value=earliest_goal_date,
+                max_value=latest_goal_date,
+                help=(
+                    f"Goals can be planned through {latest_goal_date.isoformat()}. "
+                    "The next marathon is preselected for 2027-01-31."
+                ),
+                key=f"race_date_{goal_distance.value}",
+            )
+        with goal_columns[1]:
+            target_text = st.text_input(
+                "Target time",
+                value=format_duration(goal_estimate.race_readiness_time_seconds),
+                help="Use M:SS or H:MM:SS.",
+                key=f"target_time_{goal_distance.value}",
+            )
+        with goal_columns[2]:
+            plan_days_per_week = st.slider(
+                "Running days per week",
+                min_value=3,
+                max_value=7,
+                value=6,
+            )
+
+        try:
+            target_seconds = parse_duration(target_text)
+            save_column, refresh_column = st.columns(2)
+            save_selected = save_column.button(
+                "Save as active plan",
+                type="primary",
+                use_container_width=True,
+            )
+            refresh_selected = refresh_column.button(
+                "Refresh active plan",
+                use_container_width=True,
+            )
+            if save_selected:
+                persisted = save_training_plan(
+                    api_url,
+                    goal_distance,
+                    goal_date,
+                    target_seconds,
+                    plan_days_per_week,
+                )
+                plan = persisted.preview
+                action = "created" if persisted.created else "reused"
+                st.success(f"Active plan v{persisted.version} {action} and saved.")
+            elif refresh_selected:
+                persisted = refresh_active_training_plan(api_url)
+                plan = persisted.preview
+                action = "created" if persisted.created else "already current"
+                st.success(f"Active plan v{persisted.version}: {action}.")
+            else:
+                plan = load_training_plan(
+                    api_url,
+                    goal_distance,
+                    goal_date,
+                    target_seconds,
+                    plan_days_per_week,
+                )
+            render_training_plan(plan)
+        except (DashboardApiError, ValidationError, ValueError) as error:
+            st.error("Training plan could not be generated.")
+            st.caption(str(error))
 
     with workload_tab:
         render_workload(workload_data)

@@ -7,6 +7,8 @@ from runcoach.dashboard.schemas import (
     AnalyticsOverview,
     AnalyticsTrends,
     PerformanceOverview,
+    PersistedTrainingPlan,
+    TrainingPlanPreview,
 )
 
 
@@ -169,6 +171,55 @@ def performance_payload() -> dict[str, object]:
     }
 
 
+def training_plan_payload() -> dict[str, object]:
+    """Return a representative goal-based plan preview."""
+
+    session = {
+        "scheduled_date": "2026-09-08",
+        "kind": "easy",
+        "title": "Easy aerobic run",
+        "distance_km": 9.0,
+        "pace": {
+            "faster_seconds_per_km": 306.0,
+            "slower_seconds_per_km": 346.0,
+        },
+        "purpose": "Maintain aerobic frequency.",
+    }
+    week = {
+        "week_number": 1,
+        "start_date": "2026-09-07",
+        "end_date": "2026-09-13",
+        "phase": "base",
+        "target_distance_km": 71.7,
+        "long_run_km": 22.9,
+        "quality_focus": "marathon pace and fueling durability",
+    }
+    return {
+        "algorithm_version": "goal_plan_preview_v1",
+        "status": "preview_not_persisted",
+        "as_of_date": "2026-09-04",
+        "plan_start_date": "2026-09-07",
+        "goal": {
+            "distance": "marathon",
+            "race_date": "2026-11-29",
+            "target_time_seconds": 11400.0,
+            "days_per_week": 6,
+        },
+        "goal_status": "achievable",
+        "weeks_to_race": 12,
+        "fitness_potential_seconds": 11388.665,
+        "current_readiness_seconds": 11461.396,
+        "recommended_target_seconds": 11461.396,
+        "target_gap_seconds": -61.396,
+        "current_preparation_score": 0.92,
+        "recent_weekly_distance_km": 77.972,
+        "first_week": [session, session, session],
+        "weekly_outline": [week, {**week, "week_number": 2}],
+        "rationale": ["The plan uses current fitness and training evidence."],
+        "guardrails": ["Keep easy days conversational."],
+    }
+
+
 def test_overview_schema_parses_dates_and_nested_models() -> None:
     overview = AnalyticsOverview.model_validate(overview_payload())
 
@@ -197,6 +248,31 @@ def test_performance_schema_parses_evidence_and_fitness_estimate() -> None:
     assert performance.verified_labels == 1
     assert performance.current_fitness.training.runs_365d == 100
     assert performance.current_fitness.estimates[0].fitness_potential_time_seconds == 2464.0
+
+
+def test_training_plan_schema_parses_goal_sessions_and_weeks() -> None:
+    plan = TrainingPlanPreview.model_validate(training_plan_payload())
+
+    assert plan.goal.distance.value == "marathon"
+    assert plan.goal_status.value == "achievable"
+    assert plan.first_week[0].pace is not None
+    assert plan.first_week[0].pace.faster_seconds_per_km == 306.0
+    assert plan.weekly_outline[0].phase.value == "base"
+
+
+def test_persisted_training_plan_schema_wraps_versioned_preview() -> None:
+    plan = PersistedTrainingPlan.model_validate(
+        {
+            "goal_id": "018f0000-0000-7000-8000-000000000030",
+            "plan_id": "018f0000-0000-7000-8000-000000000031",
+            "version": 2,
+            "created": True,
+            "preview": training_plan_payload(),
+        }
+    )
+
+    assert plan.version == 2
+    assert plan.preview.goal.race_date.isoformat() == "2026-11-29"
 
 
 def test_schema_rejects_unknown_fields() -> None:

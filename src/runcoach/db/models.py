@@ -1019,3 +1019,117 @@ class PersonalBest(Base):
         nullable=False,
         server_default=func.now(),
     )
+
+
+class Goal(TimestampMixin, Base):
+    """A durable athlete race goal that owns versioned training plans."""
+
+    __tablename__ = "goals"
+    __table_args__ = (
+        CheckConstraint(
+            "race_type IN ('5k', '10k', 'half_marathon', 'marathon')",
+            name="goals_race_type",
+        ),
+        CheckConstraint(
+            "target_time_seconds IS NULL OR target_time_seconds > 0",
+            name="goals_target_time",
+        ),
+        CheckConstraint(
+            "days_per_week BETWEEN 3 AND 7",
+            name="goals_days_per_week",
+        ),
+        CheckConstraint(
+            "status IN ('planned', 'active', 'completed', 'cancelled')",
+            name="goals_status",
+        ),
+        CheckConstraint(
+            "priority IN ('primary', 'secondary', 'other')",
+            name="goals_priority",
+        ),
+        UniqueConstraint(
+            "athlete_id",
+            "race_type",
+            "race_date",
+            name="uq_goals_athlete_race_date",
+        ),
+        Index("ix_goals_athlete_status", "athlete_id", "status"),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        primary_key=True,
+        default=uuid4,
+    )
+    athlete_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("athletes.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    race_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    race_date: Mapped[date] = mapped_column(Date, nullable=False)
+    target_time_seconds: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    days_per_week: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(16),
+        nullable=False,
+        server_default=text("'planned'"),
+    )
+    priority: Mapped[str] = mapped_column(
+        String(16),
+        nullable=False,
+        server_default=text("'primary'"),
+    )
+
+
+class TrainingPlan(Base):
+    """An immutable generated plan snapshot for one durable race goal."""
+
+    __tablename__ = "training_plans"
+    __table_args__ = (
+        CheckConstraint("version > 0", name="training_plans_version"),
+        CheckConstraint(
+            "status IN ('active', 'superseded')",
+            name="training_plans_status",
+        ),
+        CheckConstraint(
+            "length(evidence_hash) = 64",
+            name="training_plans_evidence_hash",
+        ),
+        UniqueConstraint(
+            "goal_id",
+            "version",
+            name="uq_training_plans_goal_version",
+        ),
+        UniqueConstraint(
+            "goal_id",
+            "evidence_hash",
+            name="uq_training_plans_goal_evidence",
+        ),
+        Index("ix_training_plans_goal_status", "goal_id", "status"),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        primary_key=True,
+        default=uuid4,
+    )
+    goal_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("goals.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    algorithm_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    evidence_as_of_date: Mapped[date] = mapped_column(Date, nullable=False)
+    evidence_hash: Mapped[str] = mapped_column(CHAR(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    plan_payload: Mapped[dict[str, Any]] = mapped_column(JSON_DOCUMENT, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    superseded_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )

@@ -320,6 +320,41 @@ volume, pace, elevation, heart-rate availability, duration load, explainable tit
 session counts, prior workload state, and prior verified PB evidence. All features stop
 strictly before the candidate starts; unreviewed candidates have no verified target time.
 
+### Training-plan preview
+
+The coaching API can assess a selected race goal and generate a progressive plan preview:
+
+```powershell
+Invoke-RestMethod (
+  'http://localhost:8000/api/v1/coaching/plan-preview?' +
+  'distance=marathon&race_date=2027-01-31&' +
+  'target_time_seconds=11400&days_per_week=6'
+) | ConvertTo-Json -Depth 8
+```
+
+`goal_plan_preview_v1` uses the current training-context fitness estimate, trailing 28-day
+volume, target-specific preparation, and the time remaining before race day. It reports goal
+status, the first week as concrete dated sessions, and a full week-by-week volume and focus
+outline. Build weeks progress gradually, every fourth week reduces load, and the final weeks
+taper. The preview endpoint is read-only until the athlete explicitly saves it as the active
+plan.
+
+Persist the selected goal and plan, retrieve it later, or refresh it after importing new
+activities:
+
+```powershell
+Invoke-RestMethod -Method Post (
+  'http://localhost:8000/api/v1/coaching/plans/active?' +
+  'distance=marathon&race_date=2027-01-31&' +
+  'target_time_seconds=11400&days_per_week=6'
+)
+Invoke-RestMethod 'http://localhost:8000/api/v1/coaching/plans/active'
+Invoke-RestMethod -Method Post 'http://localhost:8000/api/v1/coaching/plans/active/refresh'
+```
+
+Identical evidence reuses the active version. Changed fitness or training evidence creates a
+new plan version and retains the previous snapshot as superseded history.
+
 ## Analytical dashboard
 
 Run the dashboard directly while the API is available at `http://localhost:8000`:
@@ -344,8 +379,12 @@ Local endpoints:
 
 The dashboard consumes validated aggregate API responses. Its performance panel displays
 verified personal bests and the experimental personalized estimates with ranges, confidence,
-and multi-horizon training evidence. OpenAI may later explain model evidence and uncertainty,
-but numeric predictions remain outputs of versioned, tested code.
+and multi-horizon training evidence. Its training-plan panel lets the athlete choose a race
+distance, date, target time, and weekly running frequency, then displays the resulting goal
+assessment, first training week, and complete progression outline. It currently preselects the
+next marathon on 2027-01-31 and supports a rolling one-year goal horizon. OpenAI may later explain
+model evidence and uncertainty, but numeric predictions and prescribed training loads remain
+outputs of versioned, tested code.
 It does not connect directly to PostgreSQL, mount the private activity directory, or expose
 private filenames, credentials, or raw GPS coordinates.
 

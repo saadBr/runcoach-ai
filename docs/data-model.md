@@ -135,12 +135,34 @@ Rules:
 | `race_type` | Text | `5k`, `10k`, `half_marathon`, or `marathon` |
 | `race_date` | Date | Required |
 | `target_time_seconds` | Integer | Nullable and positive |
+| `days_per_week` | Smallint | Three to seven |
 | `status` | Text | `planned`, `active`, `completed`, or `cancelled` |
 | `priority` | Text | `primary`, `secondary`, or `other` |
 | `created_at` | Timestamptz | Required |
 | `updated_at` | Timestamptz | Required |
 
 An athlete may have only one active primary goal for the same race date.
+
+### `training_plans`
+
+Stores immutable generated snapshots so a plan can be refreshed without losing its earlier
+recommendations or evidence boundary.
+
+| Column | Type | Rules |
+|---|---|---|
+| `id` | UUID | Primary key |
+| `goal_id` | UUID | Foreign key to `goals` |
+| `version` | Integer | Positive and increasing within a goal |
+| `algorithm_version` | Text | Required deterministic planner version |
+| `evidence_as_of_date` | Date | Latest evidence included in this snapshot |
+| `evidence_hash` | Character(64) | Idempotency and change-detection hash |
+| `status` | Text | `active` or `superseded` |
+| `plan_payload` | JSONB | Validated bounded plan snapshot |
+| `created_at` | Timestamptz | Required |
+| `superseded_at` | Timestamptz | Nullable |
+
+`(goal_id, version)` and `(goal_id, evidence_hash)` are unique. Exactly one snapshot is
+activated by the persistence service for the athlete's active primary goal.
 
 ## Import and provenance tables
 
