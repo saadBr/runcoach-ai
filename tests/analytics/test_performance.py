@@ -10,10 +10,12 @@ from runcoach.analytics.performance import (
     DEFAULT_RIEGEL_EXPONENT,
     DISTANCE_INTERPOLATION_VERSION,
     RIEGEL_ALGORITHM_VERSION,
+    ROLLING_DISTANCE_INTERPOLATION_VERSION,
     DistanceSample,
     PerformanceLabel,
     StandardDistance,
     VerifiedPerformance,
+    calculate_fastest_rolling_distance_effort,
     calculate_personal_best_progression,
     calculate_standard_distance_effort,
     match_standard_distance,
@@ -133,6 +135,74 @@ def test_standard_distance_effort_rejects_non_monotonic_samples() -> None:
             ),
             StandardDistance.FIVE_K,
         )
+
+
+def test_fastest_rolling_effort_finds_a_quick_segment_after_warmup() -> None:
+    samples = (
+        DistanceSample(elapsed_ms=0, distance_m=0),
+        DistanceSample(elapsed_ms=360_000, distance_m=1_000),
+        DistanceSample(elapsed_ms=600_000, distance_m=2_000),
+        DistanceSample(elapsed_ms=840_000, distance_m=3_000),
+        DistanceSample(elapsed_ms=1_080_000, distance_m=4_000),
+        DistanceSample(elapsed_ms=1_320_000, distance_m=5_000),
+        DistanceSample(elapsed_ms=1_560_000, distance_m=6_000),
+    )
+
+    effort = calculate_fastest_rolling_distance_effort(samples, StandardDistance.FIVE_K)
+
+    assert effort is not None
+    assert effort.algorithm_version == ROLLING_DISTANCE_INTERPOLATION_VERSION
+    assert effort.start_elapsed_ms == 360_000
+    assert effort.finish_elapsed_ms == 1_560_000
+    assert effort.elapsed_time_seconds == 1_200
+    assert effort.pace_seconds_per_km == 240
+
+
+def test_fastest_rolling_effort_interpolates_a_segment_boundary() -> None:
+    effort = calculate_fastest_rolling_distance_effort(
+        (
+            DistanceSample(elapsed_ms=0, distance_m=0),
+            DistanceSample(elapsed_ms=300_000, distance_m=1_000),
+            DistanceSample(elapsed_ms=900_000, distance_m=3_500),
+            DistanceSample(elapsed_ms=1_500_000, distance_m=6_000),
+        ),
+        StandardDistance.FIVE_K,
+    )
+
+    assert effort is not None
+    assert effort.start_elapsed_ms == 300_000
+    assert effort.finish_elapsed_ms == 1_500_000
+    assert effort.elapsed_time_seconds == 1_200
+
+
+def test_fastest_rolling_effort_returns_none_without_enough_distance() -> None:
+    effort = calculate_fastest_rolling_distance_effort(
+        (
+            DistanceSample(elapsed_ms=0, distance_m=0),
+            DistanceSample(elapsed_ms=1_000_000, distance_m=4_999),
+        ),
+        StandardDistance.FIVE_K,
+    )
+
+    assert effort is None
+
+
+def test_fastest_rolling_effort_excludes_distance_plateau_time() -> None:
+    effort = calculate_fastest_rolling_distance_effort(
+        (
+            DistanceSample(elapsed_ms=0, distance_m=0),
+            DistanceSample(elapsed_ms=300_000, distance_m=1_000),
+            DistanceSample(elapsed_ms=400_000, distance_m=1_000),
+            DistanceSample(elapsed_ms=1_400_000, distance_m=6_000),
+            DistanceSample(elapsed_ms=1_500_000, distance_m=6_000),
+        ),
+        StandardDistance.FIVE_K,
+    )
+
+    assert effort is not None
+    assert effort.start_elapsed_ms == 400_000
+    assert effort.finish_elapsed_ms == 1_400_000
+    assert effort.elapsed_time_seconds == 1_000
 
 
 @pytest.mark.parametrize(

@@ -196,6 +196,8 @@ def test_evidence_interpolates_standard_distance_from_trackpoints(
     assert evidence.distance_samples == 3
     assert evidence.derived_effort is not None
     assert evidence.derived_effort.elapsed_time_seconds == 1_200
+    assert evidence.rolling_effort is not None
+    assert evidence.rolling_effort.elapsed_time_seconds == 1_150
 
 
 def test_evidence_reports_missing_trackpoint_support(db_session: Session) -> None:
@@ -216,6 +218,7 @@ def test_evidence_reports_missing_trackpoint_support(db_session: Session) -> Non
 
     assert evidence.distance_samples == 0
     assert evidence.derived_effort is None
+    assert evidence.rolling_effort is None
 
 
 def test_evidence_requires_an_eligible_activity(db_session: Session) -> None:
@@ -311,7 +314,7 @@ def test_training_dataset_uses_only_pre_event_evidence(db_session: Session) -> N
 
     candidate = next(row for row in dataset.rows if row.activity_id == candidate_id)
     windows = {window.days: window for window in candidate.training_windows}
-    assert dataset.dataset_version == "performance_training_features_v1"
+    assert dataset.dataset_version == "performance_training_features_v2"
     assert dataset.model_status == "evaluation_required"
     assert candidate.review_status == "verified"
     assert candidate.review_label == "verified_max_effort"
@@ -349,3 +352,39 @@ def test_training_dataset_keeps_unreviewed_candidates_unlabeled(
     assert dataset.rows[0].review_status == "unreviewed"
     assert dataset.rows[0].review_label is None
     assert dataset.rows[0].verified_elapsed_time_seconds is None
+
+
+def test_training_dataset_includes_verified_rolling_effort_from_long_activity(
+    db_session: Session,
+) -> None:
+    activity_id = UUID("018f0000-0000-7000-8000-000000000012")
+    _add_activity(
+        db_session,
+        activity_number=12,
+        distance_m="11000.000",
+        elapsed_time_ms=4_000_000,
+    )
+    db_session.add(
+        PersonalBest(
+            athlete_id=ATHLETE_ID,
+            activity_id=activity_id,
+            distance_m=Decimal("5000.000"),
+            elapsed_time_ms=1_128_000,
+            effort_type="provider_best_effort",
+            verification_status="verified_max_effort",
+            verification_source="synthetic_review",
+            achieved_at=datetime(2026, 1, 12, tzinfo=UTC),
+            algorithm_version="synthetic_review_v1",
+        )
+    )
+    db_session.commit()
+
+    dataset = PerformanceAuditQueryService(db_session).training_dataset(athlete_id=ATHLETE_ID)
+
+    assert dataset.candidate_rows == 1
+    assert dataset.verified_rows == 1
+    assert dataset.unreviewed_rows == 0
+    assert dataset.rows[0].activity_id == activity_id
+    assert dataset.rows[0].matched_distance is StandardDistance.FIVE_K
+    assert dataset.rows[0].recorded_elapsed_time_seconds == 1_128
+    assert dataset.rows[0].verified_elapsed_time_seconds == 1_128

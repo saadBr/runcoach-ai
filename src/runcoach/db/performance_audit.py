@@ -14,8 +14,10 @@ from runcoach.analytics.performance import (
     DEFAULT_DISTANCE_TOLERANCE_PCT,
     STANDARD_DISTANCE_AUDIT_VERSION,
     DistanceSample,
+    RollingDistanceEffort,
     StandardDistance,
     StandardDistanceEffort,
+    calculate_fastest_rolling_distance_effort,
     calculate_standard_distance_effort,
     match_standard_distance,
 )
@@ -29,7 +31,7 @@ from runcoach.db.models import (
     Trackpoint,
 )
 
-PERFORMANCE_FEATURE_DATASET_VERSION: Final = "performance_training_features_v1"
+PERFORMANCE_FEATURE_DATASET_VERSION: Final = "performance_training_features_v2"
 TRAINING_WINDOWS_DAYS: Final = (7, 28, 42, 84)
 
 
@@ -66,7 +68,7 @@ class PerformanceAudit:
 
 @dataclass(frozen=True, slots=True)
 class PerformanceEvidence:
-    """Recorded activity totals and an optional exact-distance derived effort."""
+    """Recorded totals plus from-start and fastest rolling distance evidence."""
 
     activity_id: UUID
     achieved_at: datetime
@@ -75,6 +77,7 @@ class PerformanceEvidence:
     distance_samples: int
     target_distance: StandardDistance
     derived_effort: StandardDistanceEffort | None
+    rolling_effort: RollingDistanceEffort | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -319,8 +322,51 @@ class PerformanceAuditQueryService:
             (record.activity_id, float(record.distance_m)): record for record in personal_bests
         }
 
+        candidates_by_key = {
+            (candidate.activity_id, candidate.matched_distance): candidate
+            for candidate in audit.candidates
+        }
+        for record in personal_bests:
+            activity = activities_by_id.get(record.activity_id)
+            matched = match_standard_distance(float(record.distance_m), tolerance_pct=0.01)
+            if activity is None or matched is None:
+                continue
+
+            key = (activity.id, matched.distance)
+            if key in candidates_by_key:
+                continue
+
+            elapsed_time_seconds = record.elapsed_time_ms / 1_000
+            candidates_by_key[key] = PerformanceCandidate(
+                activity_id=activity.id,
+                achieved_at=_utc_datetime(record.achieved_at),
+                measured_distance_m=float(record.distance_m),
+                elapsed_time_seconds=elapsed_time_seconds,
+                elapsed_pace_seconds_per_km=round(
+                    elapsed_time_seconds / (matched.official_distance_m / 1_000),
+                    6,
+                ),
+                activity_type=activity.activity_type,
+                verification_status=activity.verification_status,
+                matched_distance=matched.distance,
+                official_distance_m=matched.official_distance_m,
+                distance_deviation_m=matched.deviation_m,
+                distance_deviation_pct=matched.deviation_pct,
+            )
+
+        candidates = tuple(
+            sorted(
+                candidates_by_key.values(),
+                key=lambda candidate: (
+                    candidate.achieved_at,
+                    candidate.matched_distance,
+                    str(candidate.activity_id),
+                ),
+            )
+        )
+
         rows: list[PerformanceTrainingRow] = []
-        for candidate in audit.candidates:
+        for candidate in candidates:
             activity = activities_by_id[candidate.activity_id]
             prior_activities = tuple(
                 prior for prior in activities if prior.start_time_utc < activity.start_time_utc
@@ -458,4 +504,8 @@ class PerformanceAuditQueryService:
             distance_samples=len(samples),
             target_distance=target_distance,
             derived_effort=calculate_standard_distance_effort(samples, target_distance),
+            rolling_effort=calculate_fastest_rolling_distance_effort(
+                samples,
+                target_distance,
+            ),
         )

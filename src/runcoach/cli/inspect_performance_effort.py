@@ -14,7 +14,7 @@ from runcoach.db.session import SessionFactory
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Compare a recorded activity total with its interpolated standard-distance crossing."
+            "Compare activity totals with from-start and fastest rolling exact-distance efforts."
         )
     )
     parser.add_argument(

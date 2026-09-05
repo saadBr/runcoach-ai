@@ -296,6 +296,12 @@ effort type, source, and algorithm version. Race-time prediction remains unavail
 candidate labels are reviewed and a training-feature model passes chronological evaluation.
 The Riegel formula remains in the analytical test suite only as a comparison benchmark.
 
+Trackpoint evidence can recover exact-distance efforts inside longer sessions, including
+warm-up and cool-down workouts. The evidence query reports both the first crossing from the
+activity start and the fastest rolling segment, using versioned linear interpolation between
+cumulative-distance samples. Provider-verified best-effort times remain the authoritative
+stored labels; the derived segment is supporting evidence rather than a replacement measurement.
+
 Export the private performance-review dataset with:
 
 ```powershell

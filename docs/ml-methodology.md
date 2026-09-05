@@ -4,8 +4,9 @@
 
 - Project: RunCoach AI
 - Document state: Provisional methodology pending label audit
-- Last updated: 2026-08-23
-- Deterministic baseline: Riegel race-time formula
+- Last updated: 2026-09-05
+- Deterministic evidence: exact-distance rolling interpolation
+- Comparison baseline: Riegel race-time formula
 - Final ML target: Not yet fixed
 
 ## Scientific position
@@ -35,10 +36,10 @@ The following verified performances are initial reference values, not a training
 
 | Distance | Verified time | Seconds |
 |---|---:|---:|
-| 5K | 19:41 | 1181 |
-| 10K | 41:30 | 2490 |
-| Half marathon | 1:32:00 | 5520 |
-| Marathon | 3:42:00 | 13320 |
+| 5K | 18:48 | 1128 |
+| 10K | 41:04 | 2464 |
+| Half marathon | 1:33:26 | 5606 |
+| Marathon | 3:41:06 | 13266 |
 
 Primary evaluation context:
 
@@ -118,6 +119,10 @@ One row represents one unique verified performance activity.
 If multiple standard-distance segments are derived from one activity, they share an
 `activity_group_id` and must remain in the same validation split. They are not treated as
 independent races.
+
+Verified provider best efforts may enter the dataset even when the enclosing activity is
+not itself near a standard distance. The target is the verified segment time, while all
+training features still stop before the enclosing activity begins.
 
 ### Target
 

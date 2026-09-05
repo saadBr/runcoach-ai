@@ -404,6 +404,19 @@ time, effort type, verification status, verification source, and algorithm versi
 Superseded records remain stored for historical audit while the analytical view returns only
 the current record for each supported distance.
 
+### Exact-distance trackpoint evidence
+
+Longer workouts may contain a valid standard-distance effort between a warm-up and cool-down.
+For these activities, `rolling_distance_interpolation_v1` searches the cumulative-distance
+trace for the fastest exact 5K, 10K, half-marathon, or marathon interval. Segment start and
+finish times are linearly interpolated at all piecewise-linear breakpoints, and the minimum
+positive elapsed interval is selected deterministically. Distance samples must be ordered by
+elapsed time and cumulative distance must not decrease.
+
+This derived interval is evidence, not an automatic label. A provider best effort or manual
+review supplies the verified result stored in `personal_bests`; small differences caused by
+sampling and provider rounding are preserved rather than silently rewritten.
+
 The deterministic Riegel calculation remains an internal comparison benchmark:
 
 ```text
@@ -418,12 +431,13 @@ course, weather, fatigue, or race execution.
 ## Performance label and feature audit
 
 The private performance dataset nominates whole activities within the configured distance
-tolerance of 5K, 10K, half-marathon, and marathon. A candidate does not become a training
-label merely because its distance matches. Existing verified personal-best evidence
-prefills reviewed rows; every other candidate remains `unreviewed` with an empty verified
-target until human review classifies it.
+tolerance of 5K, 10K, half-marathon, and marathon. It also includes verified provider best
+efforts linked to longer activities, such as a rolling 5K inside a workout. A candidate does
+not become a training label merely because its distance matches. Existing verified
+personal-best evidence prefills reviewed rows; every other candidate remains `unreviewed`
+with an empty verified target until human review classifies it.
 
-The feature bundle is versioned as `performance_training_features_v1`. For each candidate it
+The feature bundle is versioned as `performance_training_features_v2`. For each candidate it
 calculates 7-, 28-, 42-, and 84-day pre-event aggregates: run count, distance, moving time,
 longest run, weighted pace, elevation gain, heart-rate availability, and duration load. It
 also records the prior day's acute, chronic, and form state and any verified PBs achieved
