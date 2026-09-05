@@ -353,6 +353,20 @@ validates CRC data, and exposes structured session, lap, and record messages.
 - Public and cloud demonstrations use synthetic or sanitized records only.
 - Raw GPS data is not sent to an LLM by default.
 
+## Post-export Strava updates
+
+Standalone FIT files downloaded after the bulk export are stored beside the extracted Strava
+activity files under the ignored private-data directory. They cannot be joined through the
+older `activities.csv`, so the incremental adapter discovers FIT files directly, limits the
+batch by athlete-local start date, and uses the downloaded filename as provisional title
+metadata. The persistence transaction creates a missing canonical running activity and its
+Strava source record before selecting the same FIT file for lap and trackpoint storage.
+
+The update path remains idempotent through provider-scoped content hashes and conservative
+timestamp, duration, and distance matching. GPX files are deliberately excluded from direct
+discovery because GPX does not reliably retain the provider activity classification; existing
+CSV-linked GPX imports remain supported by the bulk-export workflow.
+
 ## Limitations
 
 - The audit covers one athlete and the currently available export versions.

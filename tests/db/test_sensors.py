@@ -16,6 +16,7 @@ from runcoach.db.ingestion import (
 )
 from runcoach.db.models import (
     Activity,
+    Athlete,
     DataQualityIssue,
     ImportBatch,
     ImportFile,
@@ -535,6 +536,60 @@ def test_unmatched_raw_activity_creates_warning(
     activity = db_session.scalar(select(Activity))
     assert activity is not None
     assert activity.canonical_sensor_source_id is None
+
+
+def test_direct_strava_fit_creates_canonical_activity_and_is_idempotent(
+    db_session: Session,
+) -> None:
+    db_session.add(
+        Athlete(
+            id=ATHLETE_ID,
+            display_name="Test Athlete",
+            timezone="Africa/Casablanca",
+        )
+    )
+    db_session.commit()
+    raw_input = _raw_input(
+        provider=SourceProvider.STRAVA,
+        source_format=SourceFormat.FIT,
+        content_sha256=STRAVA_RAW_HASH,
+        external_activity_id=None,
+    )
+    direct_input = SensorActivityInput(
+        file=raw_input.file,
+        activity=raw_input.activity.model_copy(update={"name": "Hill Session"}),
+        activity_type="workout",
+    )
+
+    first = SensorPersistenceService(db_session).persist(
+        athlete_id=ATHLETE_ID,
+        parser_bundle_version="sensor-test-1",
+        inputs=(direct_input,),
+        create_missing_strava_activities=True,
+    )
+    second = SensorPersistenceService(db_session).persist(
+        athlete_id=ATHLETE_ID,
+        parser_bundle_version="sensor-test-1",
+        inputs=(direct_input,),
+        create_missing_strava_activities=True,
+    )
+
+    assert first.activities_created == 1
+    assert first.matched_files == 1
+    assert first.activities_enriched == 1
+    assert second.activities_created == 0
+    assert second.duplicate_files == 1
+    assert second.activities_unchanged == 1
+
+    activity = db_session.scalar(select(Activity))
+    assert activity is not None
+    assert activity.name == "Hill Session"
+    assert activity.activity_type == "workout"
+    assert activity.distance_m is not None
+    assert activity.canonical_sensor_source_id is not None
+    assert db_session.scalar(select(func.count()).select_from(SourceActivity)) == 1
+    assert db_session.scalar(select(func.count()).select_from(Lap)) == 1
+    assert db_session.scalar(select(func.count()).select_from(Trackpoint)) == 3
 
 
 def test_sensor_failure_rolls_back_the_complete_batch(

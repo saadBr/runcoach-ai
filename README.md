@@ -158,6 +158,20 @@ uv run python -m runcoach.cli.import_sensors `
   --strava-root 'data\private\strava\extracted'
 ```
 
+Import standalone Strava FIT downloads created after the bulk export:
+
+```powershell
+uv run python -m runcoach.cli.import_strava_activities `
+  --activity-dir 'data\private\strava\extracted\activities' `
+  --since '2026-08-24'
+```
+
+This incremental command discovers FIT and FIT.GZ files directly because they are not listed
+in the older `activities.csv`. It creates missing canonical runs, derives a provisional title
+from the downloaded Strava filename, stores laps and trackpoints in the same transaction, and
+uses file hashes plus activity matching to make repeat imports idempotent. Windows download
+suffixes such as `(1)` are not treated as part of the activity title.
+
 Import raw Garmin activity detail:
 
 ```powershell

@@ -4,8 +4,10 @@ from collections import defaultdict
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import ROUND_HALF_UP, Decimal
+from hashlib import sha256
 from typing import Any, Literal
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import delete, insert, select
 from sqlalchemy.orm import Session
@@ -52,6 +54,7 @@ class SensorActivityInput:
 
     file: ImportFileDescriptor
     activity: NormalizedActivity
+    activity_type: Literal["race", "workout", "easy", "long", "unknown", "other"] = "unknown"
 
     def __post_init__(self) -> None:
         if self.file.provider != self.activity.source.provider:
@@ -87,6 +90,7 @@ class PersistedSensorImportSummary:
     laps_written: int
     trackpoints_written: int
     quality_issues_created: int
+    activities_created: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -189,6 +193,22 @@ def _is_compatible(
     return abs(raw_activity.distance_m - canonical_distance_m) <= distance_tolerance_m
 
 
+def _dedupe_fingerprint(activity: NormalizedActivity) -> str:
+    elapsed_time = _milliseconds(activity.elapsed_time_s)
+    distance = _decimal(activity.distance_m)
+    payload = "|".join(
+        (
+            str(activity.athlete_id),
+            activity.source.provider.value,
+            _as_utc(activity.start_time_utc).isoformat(),
+            activity.activity_kind.value,
+            "" if distance is None else str(distance.quantize(Decimal("0.001"))),
+            "" if elapsed_time is None else str(elapsed_time),
+        )
+    )
+    return sha256(payload.encode("utf-8")).hexdigest()
+
+
 class SensorPersistenceService:
     """Persist raw-file provenance and selected canonical sensor detail."""
 
@@ -201,6 +221,7 @@ class SensorPersistenceService:
         athlete_id: UUID,
         parser_bundle_version: str,
         inputs: tuple[SensorActivityInput, ...],
+        create_missing_strava_activities: bool = False,
     ) -> PersistedSensorImportSummary:
         """Persist one atomic batch of parsed raw running activities."""
 
@@ -216,6 +237,7 @@ class SensorPersistenceService:
                     athlete_id=athlete_id,
                     parser_bundle_version=parser_bundle_version,
                     inputs=inputs,
+                    create_missing_strava_activities=create_missing_strava_activities,
                 )
         except SensorPersistenceError:
             raise
@@ -230,8 +252,10 @@ class SensorPersistenceService:
         athlete_id: UUID,
         parser_bundle_version: str,
         inputs: tuple[SensorActivityInput, ...],
+        create_missing_strava_activities: bool,
     ) -> PersistedSensorImportSummary:
-        if self._session.get(Athlete, athlete_id) is None:
+        athlete = self._session.get(Athlete, athlete_id)
+        if athlete is None:
             raise SensorPersistenceError(
                 "The athlete must exist before raw sensor data can be imported."
             )
@@ -299,6 +323,7 @@ class SensorPersistenceService:
         ambiguous_files = 0
         source_links_created = 0
         quality_issues_created = 0
+        activities_created = 0
 
         candidates_by_activity: dict[UUID, list[_SensorCandidate]] = defaultdict(list)
 
@@ -322,6 +347,26 @@ class SensorPersistenceService:
                 sources_by_external_id=sources_by_external_id,
                 sources_by_activity_provider=sources_by_activity_provider,
             )
+
+            if (
+                status == "unmatched"
+                and create_missing_strava_activities
+                and item.file.provider == SourceProvider.STRAVA
+            ):
+                (
+                    status,
+                    canonical_activity,
+                    resolved_source_activity,
+                    created_activity,
+                ) = self._resolve_or_create_strava_activity(
+                    athlete=athlete,
+                    item=item,
+                    import_file=import_file,
+                    canonical_activities=canonical_activities,
+                    canonical_by_id=canonical_by_id,
+                    sources_by_activity_provider=sources_by_activity_provider,
+                )
+                activities_created += int(created_activity)
 
             if status == "unmatched":
                 unmatched_files += 1
@@ -433,7 +478,87 @@ class SensorPersistenceService:
             laps_written=laps_written,
             trackpoints_written=trackpoints_written,
             quality_issues_created=quality_issues_created,
+            activities_created=activities_created,
         )
+
+    def _resolve_or_create_strava_activity(
+        self,
+        *,
+        athlete: Athlete,
+        item: SensorActivityInput,
+        import_file: ImportFile,
+        canonical_activities: list[Activity],
+        canonical_by_id: dict[UUID, Activity],
+        sources_by_activity_provider: dict[tuple[UUID, str], list[SourceActivity]],
+    ) -> tuple[MatchStatus, Activity | None, SourceActivity | None, bool]:
+        compatible_activities = [
+            activity for activity in canonical_activities if _is_compatible(item.activity, activity)
+        ]
+        if len(compatible_activities) > 1:
+            return "ambiguous", None, None, False
+
+        created = not compatible_activities
+        if compatible_activities:
+            canonical_activity = compatible_activities[0]
+        else:
+            normalized = item.activity
+            distance_m = _decimal(normalized.distance_m)
+            elapsed_time_ms = _milliseconds(normalized.elapsed_time_s)
+            if distance_m is None or elapsed_time_ms is None:
+                return "unmatched", None, None, False
+
+            moving_time_ms = _milliseconds(normalized.moving_time_s) or elapsed_time_ms
+            timezone_name = normalized.timezone_name or athlete.timezone
+            canonical_activity = Activity(
+                athlete_id=athlete.id,
+                sport="running",
+                activity_type=item.activity_type,
+                name=normalized.name,
+                start_time_utc=_as_utc(normalized.start_time_utc),
+                original_timezone=timezone_name,
+                local_start_date=(
+                    _as_utc(normalized.start_time_utc).astimezone(ZoneInfo(athlete.timezone)).date()
+                ),
+                distance_m=distance_m,
+                moving_time_ms=moving_time_ms,
+                elapsed_time_ms=elapsed_time_ms,
+                elevation_gain_m=_decimal(normalized.elevation_gain_m),
+                average_hr_bpm=_decimal(normalized.average_heart_rate_bpm, "0.01"),
+                max_hr_bpm=normalized.maximum_heart_rate_bpm,
+                average_cadence_spm=_decimal(normalized.average_cadence_spm),
+                calories_kcal=_decimal(normalized.calories_kcal),
+                verification_status="unverified",
+            )
+            self._session.add(canonical_activity)
+            self._session.flush()
+            canonical_activities.append(canonical_activity)
+            canonical_by_id[canonical_activity.id] = canonical_activity
+
+        source_activity = SourceActivity(
+            import_file_id=import_file.id,
+            activity_id=canonical_activity.id,
+            provider=SourceProvider.STRAVA.value,
+            external_activity_id=item.activity.source.source_activity_id,
+            source_start_time=_as_utc(item.activity.start_time_utc),
+            source_sport=item.activity.provider_activity_type,
+            source_distance_m=_decimal(item.activity.distance_m),
+            source_duration_ms=_milliseconds(item.activity.elapsed_time_s),
+            dedupe_fingerprint=_dedupe_fingerprint(item.activity),
+            resolution_status="canonical",
+            raw_metadata={
+                "activity_kind": item.activity.activity_kind.value,
+                "direct_raw_import": True,
+                "source_file_name": item.file.source_file_name,
+                "source_format": item.file.source_format.value,
+                "title_source": "downloaded_strava_filename",
+            },
+        )
+        self._session.add(source_activity)
+        self._session.flush()
+        sources_by_activity_provider[(canonical_activity.id, SourceProvider.STRAVA.value)].append(
+            source_activity
+        )
+        return "matched", canonical_activity, source_activity, created
 
     def _register_file(
         self,
