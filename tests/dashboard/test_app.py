@@ -17,6 +17,7 @@ from runcoach.dashboard.app import (
     format_duration,
     format_optional,
     format_pace,
+    upload_title_from_filename,
     weekly_frame,
 )
 from runcoach.dashboard.schemas import AnalyticsTrends
@@ -281,6 +282,78 @@ PERSISTED_TRAINING_PLAN_PAYLOAD = {
     "preview": TRAINING_PLAN_PAYLOAD,
 }
 
+PLAN_TRACKING_PAYLOAD = {
+    "goal_id": "018f0000-0000-7000-8000-000000000030",
+    "plan_id": "018f0000-0000-7000-8000-000000000031",
+    "active_version": 1,
+    "as_of_date": "2026-08-27",
+    "plan_start_date": "2026-08-31",
+    "race_date": "2027-01-31",
+    "status": "not_started",
+    "completed_weeks": 0,
+    "total_weeks": 2,
+    "current_week_number": None,
+    "planned_distance_to_date_km": 0.0,
+    "actual_distance_to_date_km": 0.0,
+    "adherence_pct": None,
+    "weeks": [
+        {
+            "week_number": week["week_number"],
+            "start_date": week["start_date"],
+            "end_date": week["end_date"],
+            "phase": week["phase"],
+            "status": "upcoming",
+            "target_distance_km": week["target_distance_km"],
+            "target_long_run_km": week["long_run_km"],
+            "actual_runs": 0,
+            "actual_distance_km": 0.0,
+            "actual_long_run_km": 0.0,
+            "distance_completion_pct": 0.0,
+            "long_run_completion_pct": 0.0,
+        }
+        for week in cast(
+            list[dict[str, object]],
+            TRAINING_PLAN_PAYLOAD["weekly_outline"],
+        )
+    ],
+    "sessions": [
+        {
+            "scheduled_date": session["scheduled_date"],
+            "kind": session["kind"],
+            "title": session["title"],
+            "target_distance_km": session["distance_km"],
+            "status": "upcoming",
+            "matched_activity_date": None,
+            "matched_activity_name": None,
+            "actual_distance_km": None,
+            "actual_pace_seconds_per_km": None,
+            "classified_as": None,
+            "distance_completion_pct": None,
+            "pace_status": "unavailable",
+        }
+        for session in cast(
+            list[dict[str, object]],
+            TRAINING_PLAN_PAYLOAD["first_week"],
+        )
+    ],
+    "recommendation_code": "plan_not_started",
+    "recommendation": "The plan begins with an easy aerobic run.",
+    "versions": [
+        {
+            "plan_id": "018f0000-0000-7000-8000-000000000031",
+            "version": 1,
+            "status": "active",
+            "evidence_as_of_date": "2026-08-27",
+            "created_at": "2026-08-27T10:00:00Z",
+            "superseded_at": None,
+            "recent_weekly_distance_km": 64.337,
+            "first_week_target_km": 59.2,
+            "peak_week_target_km": 61.3,
+            "peak_long_run_km": 19.6,
+        }
+    ],
+}
+
 
 class StubAnalyticsHandler(BaseHTTPRequestHandler):
     """Serve deterministic aggregate responses to the dashboard test."""
@@ -312,6 +385,10 @@ class StubAnalyticsHandler(BaseHTTPRequestHandler):
 
         if request_url.path == "/api/v1/coaching/plan-preview":
             self._respond(TRAINING_PLAN_PAYLOAD)
+            return
+
+        if request_url.path == "/api/v1/coaching/plans/active/tracking":
+            self._respond(PLAN_TRACKING_PAYLOAD)
             return
 
         self._respond({"detail": "Not found"}, status=404)
@@ -377,10 +454,11 @@ def test_dashboard_renders_validated_analytics(
         "Current form index",
     ]
     assert app.metric[0].value == "130"
-    assert len(app.tabs) == 5
+    assert len(app.tabs) == 6
     assert [tab.label for tab in app.tabs] == [
         "Training volume",
         "Performance",
+        "Coach",
         "Training plan",
         "Workload and form",
         "Data coverage",
@@ -390,6 +468,8 @@ def test_dashboard_renders_validated_analytics(
     assert "Current anchor" in [metric.label for metric in app.metric]
     assert "Training history" in [metric.label for metric in app.metric]
     assert "Goal assessment" in [metric.label for metric in app.metric]
+    assert "Active version" in [metric.label for metric in app.metric]
+    assert "Distance adherence" in [metric.label for metric in app.metric]
     assert app.selectbox[0].value == "marathon"
     race_date_input = next(widget for widget in app.date_input if widget.label == "Race date")
     assert race_date_input.value == date(2027, 1, 31)
@@ -461,3 +541,17 @@ def test_presentation_helpers_preserve_missing_evidence() -> None:
     assert weekly.loc[1, "pace_display"] == "Unavailable"
     assert weekly["distance_km"].sum() == pytest.approx(76.037)
     assert workload.loc[0, "acute_load"] == pytest.approx(38.5717)
+
+
+@pytest.mark.parametrize(
+    ("filename", "expected"),
+    (
+        ("Progressive_long_run (1).fit", "Progressive long run"),
+        ("Tempo_Run.fit.gz", "Tempo Run"),
+    ),
+)
+def test_upload_title_is_derived_from_strava_filename(
+    filename: str,
+    expected: str,
+) -> None:
+    assert upload_title_from_filename(filename) == expected

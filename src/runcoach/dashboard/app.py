@@ -1,6 +1,7 @@
 """Streamlit analytical dashboard backed exclusively by the RunCoach API."""
 
 import os
+import re
 from datetime import date, timedelta
 
 import pandas as pd
@@ -12,11 +13,14 @@ from pydantic import ValidationError
 from runcoach.analytics.performance import StandardDistance
 from runcoach.dashboard.api_client import DashboardApiError, RunCoachApiClient
 from runcoach.dashboard.schemas import (
+    ActivePlanTracking,
     AnalyticsOverview,
     AnalyticsTrends,
+    CoachingReply,
     PerformanceOverview,
     PersistedTrainingPlan,
     TrainingPlanPreview,
+    UploadedRunResult,
 )
 
 DEFAULT_API_URL = "http://localhost:8000"
@@ -87,6 +91,57 @@ def refresh_active_training_plan(api_url: str) -> PersistedTrainingPlan:
 
     payload = RunCoachApiClient(api_url).refresh_active_training_plan()
     return PersistedTrainingPlan.model_validate(payload)
+
+
+def load_active_plan_tracking(api_url: str) -> ActivePlanTracking:
+    """Load validated adherence and version history for the active plan."""
+
+    payload = RunCoachApiClient(api_url).get_active_training_plan_tracking()
+    return ActivePlanTracking.model_validate(payload)
+
+
+def upload_run(
+    api_url: str,
+    *,
+    filename: str,
+    title: str,
+    content: bytes,
+) -> UploadedRunResult:
+    """Upload one private FIT activity and validate the coaching update."""
+
+    payload = RunCoachApiClient(api_url).upload_run(
+        filename=filename,
+        title=title,
+        content=content,
+    )
+    return UploadedRunResult.model_validate(payload)
+
+
+def ask_coach(
+    api_url: str,
+    *,
+    message: str,
+    conversation: list[dict[str, str]],
+) -> CoachingReply:
+    """Submit one question and validate the evidence-grounded response."""
+
+    payload = RunCoachApiClient(api_url).ask_coach(
+        message=message,
+        conversation=conversation[-8:],
+    )
+    return CoachingReply.model_validate(payload)
+
+
+def upload_title_from_filename(filename: str) -> str:
+    """Suggest an editable Strava title without exposing a local path."""
+
+    title = filename
+    if title.casefold().endswith(".fit.gz"):
+        title = title[:-7]
+    elif title.casefold().endswith(".fit"):
+        title = title[:-4]
+    title = re.sub(r" \(\d+\)$", "", title)
+    return re.sub(r"_+", " ", title).strip()
 
 
 def format_pace(seconds_per_km: float | None) -> str:
@@ -575,6 +630,192 @@ def render_training_plan(plan: TrainingPlanPreview) -> None:
         )
 
 
+def render_plan_tracking(tracking: ActivePlanTracking) -> None:
+    """Render plan-to-actual progress and explain versioned adaptations."""
+
+    st.markdown("#### Active plan tracking")
+    status_column, version_column, weeks_column, adherence_column = st.columns(4)
+    status_column.metric("Plan status", tracking.status.replace("_", " ").title())
+    version_column.metric("Active version", f"v{tracking.active_version}")
+    weeks_column.metric(
+        "Completed weeks",
+        f"{tracking.completed_weeks} / {tracking.total_weeks}",
+    )
+    adherence_column.metric(
+        "Distance adherence",
+        ("Not started" if tracking.adherence_pct is None else f"{tracking.adherence_pct:.0f}%"),
+    )
+
+    if tracking.status == "not_started":
+        days_until_start = (tracking.plan_start_date - tracking.as_of_date).days
+        st.info(
+            f"The active plan starts {tracking.plan_start_date.isoformat()} "
+            f"({days_until_start} day(s) after the latest calculated evidence)."
+        )
+    else:
+        st.caption(
+            f"Through {tracking.as_of_date.isoformat()}: "
+            f"{tracking.actual_distance_to_date_km:.1f} km completed against "
+            f"{tracking.planned_distance_to_date_km:.1f} km planned to date."
+        )
+
+    st.info(tracking.recommendation)
+    st.markdown("##### Prescribed session matching")
+    session_table = pd.DataFrame.from_records(
+        [
+            {
+                "Scheduled": session.scheduled_date,
+                "Prescription": session.title,
+                "Type": session.kind.title(),
+                "Target": f"{session.target_distance_km:.1f} km",
+                "Status": session.status.title(),
+                "Matched run": session.matched_activity_name or "—",
+                "Actual": (
+                    "—"
+                    if session.actual_distance_km is None
+                    else f"{session.actual_distance_km:.1f} km"
+                ),
+                "Average pace": format_pace(session.actual_pace_seconds_per_km),
+                "Pace check": session.pace_status.replace("_", " ").title(),
+            }
+            for session in tracking.sessions
+        ]
+    )
+    st.dataframe(session_table, hide_index=True, width="stretch")
+
+    st.markdown("##### Weekly adherence")
+    progress_table = pd.DataFrame.from_records(
+        [
+            {
+                "Week": week.week_number,
+                "Start": week.start_date,
+                "Status": week.status.replace("_", " ").title(),
+                "Phase": week.phase.title(),
+                "Target": f"{week.target_distance_km:.1f} km",
+                "Actual": f"{week.actual_distance_km:.1f} km",
+                "Distance completion": f"{week.distance_completion_pct:.0f}%",
+                "Long-run target": f"{week.target_long_run_km:.1f} km",
+                "Longest run": f"{week.actual_long_run_km:.1f} km",
+            }
+            for week in tracking.weeks
+        ]
+    )
+    st.dataframe(progress_table, hide_index=True, width="stretch")
+
+    st.markdown("#### Adaptation history")
+    chronological_versions = sorted(tracking.versions, key=lambda version: version.version)
+    previous_weekly_km: float | None = None
+    version_records: list[dict[str, object]] = []
+    for version in chronological_versions:
+        change = (
+            None
+            if previous_weekly_km is None
+            else version.recent_weekly_distance_km - previous_weekly_km
+        )
+        version_records.append(
+            {
+                "Version": f"v{version.version}",
+                "Status": version.status.title(),
+                "Evidence through": version.evidence_as_of_date,
+                "Recent weekly volume": f"{version.recent_weekly_distance_km:.1f} km",
+                "Evidence change": "Initial" if change is None else f"{change:+.1f} km",
+                "First week": f"{version.first_week_target_km:.1f} km",
+                "Peak week": f"{version.peak_week_target_km:.1f} km",
+                "Peak long run": f"{version.peak_long_run_km:.1f} km",
+            }
+        )
+        previous_weekly_km = version.recent_weekly_distance_km
+    st.dataframe(
+        pd.DataFrame.from_records(reversed(version_records)),
+        hide_index=True,
+        width="stretch",
+    )
+
+
+def render_conversational_coach(api_url: str) -> None:
+    """Render a session-local conversation grounded in current RunCoach evidence."""
+
+    st.subheader("Ask RunCoach")
+    st.caption(
+        "Ask about current fitness, your marathon goal, workload, plan adherence, or the next "
+        "session. Calculations stay in versioned RunCoach code; the language model only explains "
+        "the resulting evidence."
+    )
+    if st.button("Clear coach conversation", key="clear_coach_conversation"):
+        st.session_state["coach_messages"] = []
+        st.rerun()
+    history_value = st.session_state.get("coach_messages", [])
+    history: list[dict[str, object]] = history_value if isinstance(history_value, list) else []
+
+    if not history:
+        history = [
+            {
+                "role": "assistant",
+                "content": (
+                    "Ask me what to run next, whether your marathon target is supported, how your "
+                    "current fitness is trending, or what the latest workload means."
+                ),
+                "evidence_ids": (),
+                "limitations": (),
+                "mode": "deterministic",
+            }
+        ]
+        st.session_state["coach_messages"] = history
+
+    for message in history:
+        role = str(message.get("role", "assistant"))
+        with st.chat_message(role):
+            st.markdown(str(message.get("content", "")))
+            evidence_ids = message.get("evidence_ids", ())
+            if isinstance(evidence_ids, (list, tuple)) and evidence_ids:
+                st.caption("Evidence: " + ", ".join(str(item) for item in evidence_ids))
+                response_mode = str(message.get("mode", "deterministic"))
+                mode_label = (
+                    "OpenAI explanation over RunCoach evidence"
+                    if response_mode == "openai"
+                    else "Deterministic RunCoach fallback"
+                )
+                st.caption(f"Mode: {mode_label}")
+            limitations = message.get("limitations", ())
+            if isinstance(limitations, (list, tuple)) and limitations:
+                with st.expander("Limitations"):
+                    for limitation in limitations:
+                        st.write(f"- {limitation}")
+
+    question = st.chat_input("Ask about your running and active plan")
+    if question:
+        prior_turns = [
+            {"role": str(item["role"]), "content": str(item["content"])}
+            for item in history
+            if item.get("role") in {"user", "assistant"} and item.get("content")
+        ][-8:]
+        try:
+            reply = ask_coach(
+                api_url,
+                message=question,
+                conversation=prior_turns,
+            )
+        except (DashboardApiError, ValidationError, ValueError) as error:
+            st.error("RunCoach could not answer this question.")
+            st.caption(str(error))
+            return
+
+        history.extend(
+            (
+                {"role": "user", "content": question},
+                {
+                    "role": "assistant",
+                    "content": reply.answer,
+                    "evidence_ids": reply.evidence_ids,
+                    "limitations": reply.limitations,
+                    "mode": reply.mode,
+                },
+            )
+        )
+        st.session_state["coach_messages"] = history[-17:]
+        st.rerun()
+
+
 def main() -> None:
     """Render the RunCoach dashboard."""
 
@@ -605,6 +846,52 @@ def main() -> None:
 
         if st.button("Refresh calculated data", use_container_width=True):
             load_dashboard_data.clear()
+
+        st.divider()
+        st.subheader("Add a Strava run")
+        uploaded_run = st.file_uploader(
+            "FIT activity",
+            type=["fit", "gz"],
+            help="Upload one Strava .fit or .fit.gz activity. The temporary file is deleted.",
+        )
+        if uploaded_run is None:
+            st.caption("Choose a FIT file to import it and update coaching in one step.")
+        else:
+            run_title = st.text_input(
+                "Run title",
+                value=upload_title_from_filename(uploaded_run.name),
+                key=f"run_title_{uploaded_run.name}",
+                help="Edit this so RunCoach can recognize easy, tempo, hills, long, or race work.",
+            )
+            if st.button(
+                "Upload and update coaching",
+                type="primary",
+                use_container_width=True,
+            ):
+                try:
+                    upload_result = upload_run(
+                        api_url,
+                        filename=uploaded_run.name,
+                        title=run_title,
+                        content=uploaded_run.getvalue(),
+                    )
+                    load_dashboard_data.clear()
+                    load_training_plan.clear()
+                    if upload_result.status == "duplicate":
+                        st.info("This run was already imported; coaching was refreshed.")
+                    else:
+                        distance = upload_result.activity.distance_km
+                        distance_text = (
+                            "distance unavailable" if distance is None else f"{distance:.1f} km"
+                        )
+                        st.success(
+                            f"Added {upload_result.activity.title} ({distance_text}) "
+                            "and updated coaching."
+                        )
+                    st.caption(upload_result.tracking.recommendation)
+                except (DashboardApiError, ValidationError, ValueError) as error:
+                    st.error("The run could not be imported.")
+                    st.caption(str(error))
 
         st.divider()
         st.caption(
@@ -649,10 +936,11 @@ def main() -> None:
         f"{stale_days} recovery day(s) after the latest recorded run."
     )
 
-    volume_tab, performance_tab, plan_tab, workload_tab, quality_tab = st.tabs(
+    volume_tab, performance_tab, coach_tab, plan_tab, workload_tab, quality_tab = st.tabs(
         [
             "Training volume",
             "Performance",
+            "Coach",
             "Training plan",
             "Workload and form",
             "Data coverage",
@@ -669,6 +957,9 @@ def main() -> None:
 
     with performance_tab:
         render_performance(performance)
+
+    with coach_tab:
+        render_conversational_coach(api_url)
 
     with plan_tab:
         st.subheader("Choose a race goal")
@@ -756,6 +1047,10 @@ def main() -> None:
                     plan_days_per_week,
                 )
             render_training_plan(plan)
+            try:
+                render_plan_tracking(load_active_plan_tracking(api_url))
+            except (DashboardApiError, ValidationError) as tracking_error:
+                st.caption(f"Active plan tracking is unavailable: {tracking_error}")
         except (DashboardApiError, ValidationError, ValueError) as error:
             st.error("Training plan could not be generated.")
             st.caption(str(error))

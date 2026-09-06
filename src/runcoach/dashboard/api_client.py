@@ -5,7 +5,7 @@ from datetime import date
 from json import JSONDecodeError
 from typing import cast
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode, urlsplit
+from urllib.parse import quote, urlencode, urlsplit
 from urllib.request import Request, urlopen
 
 type JsonValue = str | int | float | bool | list[JsonValue] | dict[str, JsonValue] | None
@@ -89,6 +89,65 @@ class RunCoachApiClient:
 
         return self._request_json("/api/v1/coaching/plans/active/refresh", method="POST")
 
+    def get_active_training_plan_tracking(
+        self,
+        *,
+        as_of_date: date | None = None,
+    ) -> JsonObject:
+        """Return plan adherence and immutable revision history."""
+
+        path = "/api/v1/coaching/plans/active/tracking"
+        if as_of_date is not None:
+            path = f"{path}?{urlencode({'as_of_date': as_of_date.isoformat()})}"
+        return self._get_json(path)
+
+    def upload_run(self, *, filename: str, title: str, content: bytes) -> JsonObject:
+        """Upload one Strava FIT payload and return refreshed coaching state."""
+
+        if not filename.strip():
+            raise ValueError("Run filename cannot be blank.")
+        if not title.strip():
+            raise ValueError("Run title cannot be blank.")
+        if not content:
+            raise ValueError("Run file cannot be empty.")
+        return self._request_json(
+            "/api/v1/coaching/runs",
+            method="POST",
+            data=content,
+            content_type="application/octet-stream",
+            extra_headers={
+                "X-RunCoach-Filename": quote(filename, safe=""),
+                "X-RunCoach-Title": quote(title, safe=""),
+            },
+            timeout_seconds=max(self._timeout_seconds, 60.0),
+        )
+
+    def ask_coach(
+        self,
+        *,
+        message: str,
+        conversation: list[dict[str, str]] | None = None,
+    ) -> JsonObject:
+        """Ask the evidence-grounded coach with bounded dashboard-local history."""
+
+        normalized_message = message.strip()
+        if not normalized_message:
+            raise ValueError("Coaching question cannot be blank.")
+        turns = conversation or []
+        if len(turns) > 8:
+            raise ValueError("Coaching conversation can contain at most eight prior turns.")
+        body = json.dumps(
+            {"message": normalized_message, "conversation": turns},
+            separators=(",", ":"),
+        ).encode("utf-8")
+        return self._request_json(
+            "/api/v1/coaching/chat",
+            method="POST",
+            data=body,
+            content_type="application/json",
+            timeout_seconds=max(self._timeout_seconds, 30.0),
+        )
+
     @staticmethod
     def _training_plan_query(
         *,
@@ -131,18 +190,36 @@ class RunCoachApiClient:
     def _get_json(self, path: str) -> JsonObject:
         return self._request_json(path, method="GET")
 
-    def _request_json(self, path: str, *, method: str) -> JsonObject:
+    def _request_json(
+        self,
+        path: str,
+        *,
+        method: str,
+        data: bytes | None = None,
+        content_type: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+        timeout_seconds: float | None = None,
+    ) -> JsonObject:
+        headers = {
+            "Accept": "application/json",
+            "User-Agent": "runcoach-dashboard",
+        }
+        if content_type is not None:
+            headers["Content-Type"] = content_type
+        if extra_headers is not None:
+            headers.update(extra_headers)
         request = Request(
             f"{self._base_url}{path}",
-            headers={
-                "Accept": "application/json",
-                "User-Agent": "runcoach-dashboard",
-            },
+            data=data,
+            headers=headers,
             method=method,
         )
 
         try:
-            with urlopen(request, timeout=self._timeout_seconds) as response:
+            with urlopen(
+                request,
+                timeout=(self._timeout_seconds if timeout_seconds is None else timeout_seconds),
+            ) as response:
                 response_body = response.read()
         except HTTPError as error:
             raise DashboardApiError(f"RunCoach API returned HTTP {error.code}.") from error

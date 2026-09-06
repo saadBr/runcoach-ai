@@ -4,11 +4,14 @@ import pytest
 from pydantic import ValidationError
 
 from runcoach.dashboard.schemas import (
+    ActivePlanTracking,
     AnalyticsOverview,
     AnalyticsTrends,
+    CoachingReply,
     PerformanceOverview,
     PersistedTrainingPlan,
     TrainingPlanPreview,
+    UploadedRunResult,
 )
 
 
@@ -275,6 +278,79 @@ def test_persisted_training_plan_schema_wraps_versioned_preview() -> None:
     assert plan.preview.goal.race_date.isoformat() == "2026-11-29"
 
 
+def test_active_plan_tracking_schema_parses_progress_and_history() -> None:
+    tracking = ActivePlanTracking.model_validate(
+        {
+            "goal_id": "018f0000-0000-7000-8000-000000000030",
+            "plan_id": "018f0000-0000-7000-8000-000000000031",
+            "active_version": 2,
+            "as_of_date": "2026-09-13",
+            "plan_start_date": "2026-09-07",
+            "race_date": "2027-01-31",
+            "status": "in_progress",
+            "completed_weeks": 0,
+            "total_weeks": 21,
+            "current_week_number": 1,
+            "planned_distance_to_date_km": 70.0,
+            "actual_distance_to_date_km": 72.0,
+            "adherence_pct": 102.9,
+            "weeks": [
+                {
+                    "week_number": 1,
+                    "start_date": "2026-09-07",
+                    "end_date": "2026-09-13",
+                    "phase": "base",
+                    "status": "in_progress",
+                    "target_distance_km": 70.0,
+                    "target_long_run_km": 24.0,
+                    "actual_runs": 6,
+                    "actual_distance_km": 72.0,
+                    "actual_long_run_km": 25.0,
+                    "distance_completion_pct": 102.9,
+                    "long_run_completion_pct": 104.2,
+                }
+            ],
+            "sessions": [
+                {
+                    "scheduled_date": "2026-09-13",
+                    "kind": "long",
+                    "title": "Long aerobic run",
+                    "target_distance_km": 24.0,
+                    "status": "completed",
+                    "matched_activity_date": "2026-09-13",
+                    "matched_activity_name": "Progressive long run",
+                    "actual_distance_km": 25.0,
+                    "actual_pace_seconds_per_km": 330.0,
+                    "classified_as": "progressive",
+                    "distance_completion_pct": 104.2,
+                    "pace_status": "within_range",
+                }
+            ],
+            "recommendation_code": "continue_as_planned",
+            "recommendation": "Continue with the next scheduled session.",
+            "versions": [
+                {
+                    "plan_id": "018f0000-0000-7000-8000-000000000031",
+                    "version": 2,
+                    "status": "active",
+                    "evidence_as_of_date": "2026-09-06",
+                    "created_at": "2026-09-06T10:00:00Z",
+                    "superseded_at": None,
+                    "recent_weekly_distance_km": 80.0,
+                    "first_week_target_km": 70.0,
+                    "peak_week_target_km": 85.0,
+                    "peak_long_run_km": 32.0,
+                }
+            ],
+        }
+    )
+
+    assert tracking.active_version == 2
+    assert tracking.weeks[0].actual_runs == 6
+    assert tracking.sessions[0].matched_activity_name == "Progressive long run"
+    assert tracking.versions[0].evidence_as_of_date.isoformat() == "2026-09-06"
+
+
 def test_schema_rejects_unknown_fields() -> None:
     payload = overview_payload()
     payload["athlete_id"] = "private-identifier"
@@ -291,3 +367,145 @@ def test_schema_rejects_invalid_coverage() -> None:
 
     with pytest.raises(ValidationError, match="less than or equal to 100"):
         AnalyticsOverview.model_validate(payload)
+
+
+def test_uploaded_run_schema_parses_refresh_and_recommendation() -> None:
+    result = UploadedRunResult.model_validate(
+        {
+            "status": "updated",
+            "activity": {
+                "title": "Tempo Run",
+                "local_date": "2026-09-06",
+                "distance_km": 10.0,
+                "elapsed_time_seconds": 2400.0,
+                "laps": 4,
+                "trackpoints": 800,
+            },
+            "parser_findings": 0,
+            "import_summary": {
+                "import_batch_id": "018f0000-0000-7000-8000-000000000040",
+                "total_files": 1,
+                "accepted_files": 1,
+                "duplicate_files": 0,
+                "matched_files": 1,
+                "unmatched_files": 0,
+                "ambiguous_files": 0,
+                "source_links_created": 1,
+                "activities_enriched": 1,
+                "activities_unchanged": 0,
+                "laps_written": 4,
+                "trackpoints_written": 800,
+                "quality_issues_created": 0,
+                "activities_created": 1,
+            },
+            "analytics": {
+                "as_of_date": "2026-09-06",
+                "activities_processed": 143,
+                "activities_with_profile": 103,
+                "activities_with_heart_rate_load": 98,
+                "activity_metrics_created": 1,
+                "activity_metrics_reused": 142,
+                "daily_loads_created": 1,
+                "daily_loads_updated": 0,
+                "daily_loads_reused": 839,
+            },
+            "plan_refresh": {
+                "status": "deferred_active_week",
+                "new_version_created": False,
+            },
+            "tracking": {
+                "goal_id": "018f0000-0000-7000-8000-000000000030",
+                "plan_id": "018f0000-0000-7000-8000-000000000031",
+                "active_version": 2,
+                "as_of_date": "2026-09-06",
+                "plan_start_date": "2026-09-07",
+                "race_date": "2027-01-31",
+                "status": "not_started",
+                "completed_weeks": 0,
+                "total_weeks": 21,
+                "current_week_number": None,
+                "planned_distance_to_date_km": 0.0,
+                "actual_distance_to_date_km": 0.0,
+                "adherence_pct": None,
+                "weeks": [
+                    {
+                        "week_number": 1,
+                        "start_date": "2026-09-07",
+                        "end_date": "2026-09-13",
+                        "phase": "base",
+                        "status": "upcoming",
+                        "target_distance_km": 70.0,
+                        "target_long_run_km": 24.0,
+                        "actual_runs": 0,
+                        "actual_distance_km": 0.0,
+                        "actual_long_run_km": 0.0,
+                        "distance_completion_pct": 0.0,
+                        "long_run_completion_pct": 0.0,
+                    }
+                ],
+                "sessions": [
+                    {
+                        "scheduled_date": "2026-09-07",
+                        "kind": "easy",
+                        "title": "Easy aerobic run",
+                        "target_distance_km": 8.5,
+                        "status": "upcoming",
+                        "matched_activity_date": None,
+                        "matched_activity_name": None,
+                        "actual_distance_km": None,
+                        "actual_pace_seconds_per_km": None,
+                        "classified_as": None,
+                        "distance_completion_pct": None,
+                        "pace_status": "unavailable",
+                    }
+                ],
+                "recommendation_code": "plan_not_started",
+                "recommendation": "Begin with the scheduled easy aerobic run.",
+                "versions": [
+                    {
+                        "plan_id": "018f0000-0000-7000-8000-000000000031",
+                        "version": 2,
+                        "status": "active",
+                        "evidence_as_of_date": "2026-09-06",
+                        "created_at": "2026-09-06T10:00:00Z",
+                        "superseded_at": None,
+                        "recent_weekly_distance_km": 77.0,
+                        "first_week_target_km": 70.0,
+                        "peak_week_target_km": 85.0,
+                        "peak_long_run_km": 32.0,
+                    }
+                ],
+            },
+        }
+    )
+
+    assert result.status == "updated"
+    assert result.activity.local_date.isoformat() == "2026-09-06"
+    assert result.import_summary is not None
+    assert result.import_summary.trackpoints_written == 800
+    assert result.tracking.recommendation_code == "plan_not_started"
+
+
+def test_coaching_reply_schema_preserves_provenance() -> None:
+    reply = CoachingReply.model_validate(
+        {
+            "answer": "The next session is an easy 8.5 km run.",
+            "evidence_ids": ["plan:next-session:1"],
+            "limitations": ["Sleep and soreness are not represented."],
+            "mode": "openai",
+            "model": "gpt-test",
+            "context_version": "coaching_context_v1",
+            "prompt_version": "evidence_coach_v1",
+        }
+    )
+
+    assert reply.mode == "openai"
+    assert reply.evidence_ids == ("plan:next-session:1",)
+
+    with pytest.raises(ValidationError):
+        CoachingReply.model_validate(
+            {
+                **reply.model_dump(),
+                "evidence_ids": [],
+            }
+        )

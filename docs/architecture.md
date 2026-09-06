@@ -4,7 +4,7 @@
 
 - Project: RunCoach AI
 - Document state: Living architecture aligned with the verified implementation
-- Last updated: 2026-08-31
+- Last updated: 2026-09-06
 - Architecture style: Modular monolith with separate runtime processes
 - Deployment model: Local private-data platform and sanitized cloud demonstration
 
@@ -55,7 +55,7 @@ All modules share:
 The application has separate runtime processes where process isolation solves a concrete
 problem:
 
-- FastAPI provides typed, read-only analytical service contracts.
+- FastAPI provides typed analytical queries and controlled coaching command contracts.
 - Streamlit provides the interactive analytical interface.
 - CLI processes perform private imports, profile configuration, and deterministic
   recalculation.
@@ -87,16 +87,22 @@ The verified implementation currently provides:
 - Training-context race-performance estimates with explicit uncertainty and preparation.
 - A goal-based training planner with progressive weekly load, dated sessions, durable goals,
   and immutable refreshable plan versions.
+- Weekly plan adherence and plan-version adaptation history derived from canonical runs.
+- First-week session matching with conservative missed-quality guardrails.
+- One-command coaching-data updates with hash-first discovery and stable weekly schedules.
+- A dashboard-to-API FIT upload command that imports one run and refreshes coaching atomically.
+- A provider-neutral conversational coaching boundary over privacy-minimized deterministic
+  evidence, with cited structured responses and deterministic fallback behavior.
+- An optional stateless OpenAI Responses API adapter using strict structured output.
 - Health-checked PostgreSQL, FastAPI, and Streamlit Compose services.
 
 ### Planned capabilities
 
 The following remain planned and require their own implementation and validation evidence:
 
-- Completed-session adherence and automatic schedule adaptation.
+- Persisted automatic rescheduling beyond the first detailed training week.
 - A machine-learning experiment selected after a label audit.
-- Controlled LangGraph coaching orchestration.
-- Provider-neutral language-model integration.
+- Controlled LangGraph orchestration and persisted coaching-run audit records.
 - Sanitized cloud deployment.
 
 ## System context
@@ -132,6 +138,7 @@ flowchart LR
 flowchart LR
     Browser["Web browser"] --> Dashboard["Streamlit dashboard"]
     Dashboard -->|"Aggregate HTTP responses"| API["FastAPI service"]
+    Dashboard -->|"One selected FIT payload"| API
     API --> DB[("PostgreSQL")]
 
     Private["Ignored private export area"] --> SummaryCLI["Summary import CLI"]
@@ -150,8 +157,8 @@ flowchart LR
 | Runtime | Responsibility | Data access |
 |---|---|---|
 | PostgreSQL | Durable canonical, source, sensor, profile, and analytical state | Local volume or managed database |
-| FastAPI | Typed aggregate query contracts and health endpoints | PostgreSQL and configured private mount |
-| Streamlit | Interactive visualization and evidence presentation | FastAPI only |
+| FastAPI | Typed queries, controlled upload commands, and health endpoints | PostgreSQL and configured private mount |
+| Streamlit | Interactive visualization, evidence presentation, and upload transport | FastAPI only |
 | Import CLI | Parsing, validation, reconciliation, and persistence | Private files and PostgreSQL |
 | Analytics CLI | Versioned deterministic recalculation | PostgreSQL |
 
@@ -171,7 +178,7 @@ PostgreSQL.
 | `dashboard` | API client, response validation, and presentation | Does not query PostgreSQL or recalculate domain metrics |
 | `performance` | Planned PB extraction and deterministic race baselines | Does not use post-event information in pre-event estimates |
 | `ml` | Planned datasets, training, evaluation, and inference | Does not hide failed baseline comparisons |
-| `coaching` | Planned evidence assembly and controlled orchestration | Does not replace deterministic calculations |
+| `coaching` | Shared import-to-analytics-to-plan orchestration | Does not replace deterministic calculations |
 
 Dependencies point toward stable contracts and deterministic domain behavior. Presentation,
 HTTP, database, file-format, and external-provider concerns remain replaceable adapters.
@@ -335,7 +342,7 @@ medical diagnoses.
 
 ## API architecture
 
-The API is a typed boundary over persisted deterministic results.
+The API is a typed boundary over persisted deterministic results and narrowly scoped commands.
 
 ### Implemented endpoints
 
@@ -345,6 +352,9 @@ The API is a typed boundary over persisted deterministic results.
 | `GET /health/ready` | Database-backed readiness |
 | `GET /api/v1/analytics/overview` | Current or exact-date analytical summary |
 | `GET /api/v1/analytics/trends` | Calendar-week training and daily workload series |
+| `GET /api/v1/coaching/plans/active/tracking` | Active plan adherence and recommendation |
+| `POST /api/v1/coaching/runs` | Stream one FIT run, import it, and refresh coaching state |
+| `POST /api/v1/coaching/chat` | Explain minimized current evidence conversationally |
 
 ### API principles
 
@@ -352,8 +362,12 @@ The API is a typed boundary over persisted deterministic results.
 - Pydantic models define response contracts.
 - Database models are not serialized directly.
 - Query services are read-only and use persisted analytical versions.
+- The run-upload command accepts only FIT or FIT.GZ, enforces a 25 MiB limit, stages data under
+  the ignored private directory, and deletes the staged file after parsing.
 - Domain failures map to stable HTTP behavior.
 - Aggregate endpoints expose no athlete UUID, source filename, credential, or raw coordinate.
+- The chat endpoint accepts at most eight prior turns and exposes evidence IDs, limitations,
+  execution mode, context version, and prompt version in every response.
 - New collections require pagination and explicit filtering contracts.
 
 ## Dashboard architecture
@@ -381,6 +395,12 @@ sequenceDiagram
     UI-->>Athlete: Metrics, charts, coverage, and limitations
 ```
 
+For a daily activity update, the athlete selects one FIT file and edits its title in Streamlit.
+The dashboard client sends the bytes directly to `POST /api/v1/coaching/runs`. FastAPI stages the
+payload privately, parses and hashes it, skips already imported content, persists new canonical
+sensor evidence, recalculates versioned analytics, preserves the active detailed week when
+appropriate, and returns the current session match and recommendation in one response.
+
 Dashboard responsibilities include:
 
 - Displaying totals and selected analytical windows.
@@ -388,9 +408,12 @@ Dashboard responsibilities include:
 - Showing missing-data coverage and method provenance.
 - Preserving empty calendar weeks on chart time axes.
 - Reporting unavailable values rather than manufacturing zeros.
+- Transporting a user-selected FIT payload to the controlled API command.
+- Holding bounded conversational history in the browser session and presenting cited coaching
+  evidence and limitations.
 
-The dashboard does not import files, query PostgreSQL, calculate training metrics, or access
-raw GPS coordinates.
+The dashboard does not parse or persist files, query PostgreSQL, calculate training metrics, or
+access raw GPS coordinates. It holds the selected upload only long enough to send it to FastAPI.
 
 ## Machine-learning boundary
 
@@ -416,7 +439,10 @@ volume, target-distance preparation, race date, target time, and available runni
 calling an LLM. Selected goals and generated plans can be persisted as immutable versioned
 snapshots. Refreshing after new imports reuses an identical plan or supersedes it with a new
 version when the evidence-derived output changes. Completed-session adherence and the
-conversational coaching workflow remain planned as controlled layers over structured evidence.
+conversational coaching API are operational. The first conversational slice assembles a versioned,
+privacy-minimized evidence catalog from analytics, current-fitness, verified-PB, active-goal,
+plan-adherence, and upcoming-session query services. A deterministic template answers common
+questions and remains the fallback whenever model generation is disabled or rejected.
 
 ```mermaid
 flowchart LR
@@ -432,8 +458,17 @@ flowchart LR
     Review -->|"Rejected"| Fallback["Deterministic fallback"]
 ```
 
-The graph will receive evidence identifiers, calculated values, coverage flags, goals, and
-limitations. Raw activity files and raw GPS tracks are outside the default LLM boundary.
+The optional OpenAI adapter uses the Responses API with strict JSON-schema output and request
+storage disabled. Generated evidence references are checked against the supplied catalog, and a
+deterministic reviewer rejects unsupported citations, strong guarantees, and selected medical
+language. The current slice keeps conversation history in the Streamlit session and does not
+persist prompts or responses. LangGraph routing, persisted coaching-run audit records, and a
+bounded semantic revision loop remain planned.
+
+Raw activity files, athlete identifiers, source filenames, credentials, and raw GPS tracks are
+outside the LLM boundary. The provider receives only aggregate values, deterministic session
+prescriptions, evidence identifiers, limitations, the current question, and at most eight recent
+conversation turns.
 
 ## Security and privacy architecture
 

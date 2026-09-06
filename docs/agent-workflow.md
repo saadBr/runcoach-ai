@@ -3,9 +3,9 @@
 ## Status
 
 - Project: RunCoach AI
-- Document state: Initial approved workflow
-- Last updated: 2026-08-23
-- Orchestrator: LangGraph
+- Document state: Approved workflow with conversational slice implemented
+- Last updated: 2026-09-06
+- Orchestrator: Direct typed pipeline implemented; LangGraph remains planned
 - Number of specialized agents: Five
 - LLM required for deterministic analytics: No
 
@@ -387,9 +387,9 @@ class StructuredLanguageModel(Protocol):
 
 Initial implementations:
 
-- `DisabledLanguageModel`: returns a clear provider-disabled result.
-- `FakeLanguageModel`: deterministic test implementation.
-- `OpenAILanguageModel`: optional production adapter.
+- Deterministic evidence template: returns useful provider-disabled answers.
+- Fake structured model: deterministic contract and review tests.
+- `OpenAIResponsesLanguageModel`: optional stateless production adapter.
 
 Provider-specific request objects must not leak into domain or graph state.
 
@@ -441,7 +441,8 @@ and operational metadata.
 | Medical or contradictory language | Revise once or fallback |
 | Persistence failure | Do not present result as saved or approved |
 
-Provider calls and persisted side effects require idempotency keys based on run and node IDs.
+The implemented conversational slice does not persist provider calls. Future persisted coaching
+runs and side effects require idempotency keys based on run and node IDs.
 
 ## Human review
 
@@ -501,12 +502,12 @@ LangGraph demonstrates:
 - Optional human interruption.
 - Testable workflow topology.
 
-A plain function pipeline would be simpler for a purely linear flow. LangGraph is selected
+A plain function pipeline is used for the current linear conversational slice. LangGraph is selected
 because the approved workflow has multiple decision branches, a review loop, persisted state,
-and provider-independent fallback behavior.
+and provider-independent fallback behavior once those later nodes are implemented.
 
-The implementation must remain small. Adding conversational memory, free-form tool selection,
-or agent-to-agent chat is outside the MVP.
+Conversation history is bounded to eight prior turns and remains in the dashboard session. Durable
+conversational memory, free-form tool selection, and agent-to-agent chat are outside the MVP.
 
 ## Academic concepts demonstrated
 

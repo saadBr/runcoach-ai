@@ -511,8 +511,29 @@ The method:
 
 The selected goal and generated preview can now be stored as an immutable active plan version.
 Refreshing with identical evidence is idempotent; changed training evidence creates a new
-version and supersedes the prior snapshot without deleting it. The plan does not yet observe
-completed sessions, reschedule missed work, or react to pain, illness, sleep, weather, or
-unexpected fatigue. Those require adherence evidence and a controlled coaching workflow. The
-generated guardrails prohibit compensating for missed hard sessions and state
-that the output is not medical advice.
+version and supersedes the prior snapshot without deleting it.
+
+Weekly adherence is evaluated from canonical running activities against the stored calendar
+outline. Each week reports actual run count, distance, longest run, distance completion, and
+long-run completion. First-week prescriptions are matched one-to-one to canonical activities,
+preferring the scheduled date and then a compatible session on an adjacent date. Title-derived
+session kind, persisted activity type, and distance support the match; whole-run average pace
+is not used to judge quality sessions because their warm-up and recovery segments would make
+that comparison misleading. A completed, partial, substituted, missed, due, or upcoming state
+is retained in the response. Plan-to-date distance uses full targets for completed weeks and a
+linear calendar-day fraction for the current week; this fraction is a progress indicator rather
+than a prescription that volume must be evenly distributed. Revision history exposes how the
+evidence date, recent weekly volume, first-week load, peak load, and peak long run changed.
+
+The plan does not yet persistently reschedule later weeks or react to pain, illness, sleep,
+weather, or unexpected fatigue. The deterministic coaching recommendation explicitly avoids
+moving missed quality or long-run work onto the next day. Broader changes require a controlled
+coaching workflow. The generated guardrails prohibit compensating for missed hard sessions and
+state that the output is not medical advice.
+
+The routine coaching-update workflow discovers Strava FIT files by content hash, imports only
+unseen files, recalculates deterministic analytics through the latest eligible canonical run,
+and evaluates the active plan against that evidence. The active detailed week is deliberately
+not regenerated after each activity because moving its dates would invalidate adherence
+measurement. Plan regeneration occurs only after the final dated session in that detailed week;
+the prior recommendation remains in the command result when rollover occurs.

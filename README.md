@@ -69,6 +69,10 @@ The operational data pipeline currently provides:
 - Verified standard-distance personal-best history with auditable evidence links.
 - A leakage-safe private export for reviewing candidate performance labels and training features.
 - A validated Streamlit dashboard with interactive Plotly visualizations.
+- An evidence-grounded conversational coach with cited facts, deterministic safety review, and
+  a useful provider-disabled fallback.
+- An optional stateless OpenAI Responses API adapter with schema-constrained output; numeric
+  predictions and training prescriptions remain owned by versioned RunCoach code.
 - Independent, health-checked API, dashboard, and PostgreSQL Compose services.
 
 ## Architecture
@@ -171,6 +175,31 @@ in the older `activities.csv`. It creates missing canonical runs, derives a prov
 from the downloaded Strava filename, stores laps and trackpoints in the same transaction, and
 uses file hashes plus activity matching to make repeat imports idempotent. Windows download
 suffixes such as `(1)` are not treated as part of the activity title.
+
+For routine updates after the initial import, place newly downloaded Strava FIT files in the
+ignored activities directory and run the complete coaching update:
+
+```powershell
+uv run python -m runcoach.cli.update_coaching
+```
+
+The command skips already imported hashes before parsing, imports unseen running files,
+recalculates analytics through the latest canonical run, and returns the current session match,
+weekly adherence, and coaching recommendation as JSON. A meaningful filename such as
+`3x3K_Threshold_Session.fit` or `Progressive_Long_Run.fit` should be assigned before the first
+import because the provisional session title is derived from that filename. Use `--since`
+only when intentionally limiting discovery to a local-date boundary.
+
+The detailed schedule remains stable during its active week. The updater does not regenerate
+the plan after every run; it rolls the plan forward after the final dated session in the
+detailed week, retaining the previous recommendation in the update result for auditability.
+
+The dashboard provides the primary day-to-day path: under **Add a Strava run**, select one
+`.fit` or `.fit.gz` download, edit its title, and choose **Upload and update coaching**. The
+dashboard sends the binary payload to FastAPI; the API streams it into short-lived private
+storage, validates and parses exactly one running activity, imports it idempotently, refreshes
+deterministic analytics, and returns the current plan match and recommendation. The staged file
+is deleted after processing. The CLI remains available for bulk recovery and automation.
 
 Import raw Garmin activity detail:
 
@@ -350,10 +379,15 @@ Invoke-RestMethod -Method Post (
 )
 Invoke-RestMethod 'http://localhost:8000/api/v1/coaching/plans/active'
 Invoke-RestMethod -Method Post 'http://localhost:8000/api/v1/coaching/plans/active/refresh'
+Invoke-RestMethod 'http://localhost:8000/api/v1/coaching/plans/active/tracking'
 ```
 
 Identical evidence reuses the active version. Changed fitness or training evidence creates a
-new plan version and retains the previous snapshot as superseded history.
+new plan version and retains the previous snapshot as superseded history. The tracking
+endpoint compares canonical running distance and the longest run with each planned week,
+reports plan-to-date adherence, matches first-week prescriptions to imported activities, and
+exposes the evidence and load targets for every version. Missed quality work is never moved
+onto the following day by the coaching recommendation.
 
 ## Analytical dashboard
 
@@ -382,11 +416,44 @@ verified personal bests and the experimental personalized estimates with ranges,
 and multi-horizon training evidence. Its training-plan panel lets the athlete choose a race
 distance, date, target time, and weekly running frequency, then displays the resulting goal
 assessment, first training week, and complete progression outline. It currently preselects the
-next marathon on 2027-01-31 and supports a rolling one-year goal horizon. OpenAI may later explain
-model evidence and uncertainty, but numeric predictions and prescribed training loads remain
-outputs of versioned, tested code.
-It does not connect directly to PostgreSQL, mount the private activity directory, or expose
-private filenames, credentials, or raw GPS coordinates.
+next marathon on 2027-01-31 and supports a rolling one-year goal horizon. The Coach panel answers
+questions using minimized current-fitness, workload, goal, adherence, and upcoming-session
+evidence. Each answer returns its evidence identifiers and limitations. OpenAI can explain this
+evidence when configured, but numeric predictions and prescribed training loads remain outputs
+of versioned, tested code.
+
+Conversational coaching works in deterministic mode by default. To enable the optional OpenAI
+interpreter, set these values only in the ignored `.env` file and restart the API:
+
+```dotenv
+RUNCOACH_LLM_PROVIDER=openai
+RUNCOACH_OPENAI_MODEL=gpt-5.4-mini
+OPENAI_API_KEY=your-private-api-key
+```
+
+The API sends only the minimized coaching evidence contract and bounded recent conversation. It
+uses schema-constrained output and disables provider-side response storage for these requests.
+If configuration, connectivity, output validation, evidence review, or the provider fails, the
+endpoint returns the deterministic evidence template instead of blocking coaching.
+
+The same coach can be called directly:
+
+```powershell
+$body = @{
+  message = 'What should I run next, and why?'
+  conversation = @()
+} | ConvertTo-Json
+
+Invoke-RestMethod `
+  -Method Post `
+  -Uri 'http://localhost:8000/api/v1/coaching/chat' `
+  -ContentType 'application/json' `
+  -Body $body
+```
+
+The upload control sends one selected binary file through the typed API and never mounts the
+private activity directory in the dashboard container. The dashboard does not connect directly
+to PostgreSQL or expose private filenames, credentials, or raw GPS coordinates in responses.
 
 ## Quality checks
 

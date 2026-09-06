@@ -1,6 +1,7 @@
 """Validated API response schemas used by the Streamlit dashboard."""
 
 from datetime import date, datetime
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -258,3 +259,156 @@ class PersistedTrainingPlan(DashboardSchema):
     version: int = Field(ge=1)
     created: bool
     preview: TrainingPlanPreview
+
+
+class PlanWeekProgress(DashboardSchema):
+    """Actual running completed against one planned calendar week."""
+
+    week_number: int = Field(ge=1)
+    start_date: date
+    end_date: date
+    phase: str = Field(min_length=1)
+    status: Literal["upcoming", "in_progress", "completed"]
+    target_distance_km: float = Field(ge=0)
+    target_long_run_km: float = Field(ge=0)
+    actual_runs: int = Field(ge=0)
+    actual_distance_km: float = Field(ge=0)
+    actual_long_run_km: float = Field(ge=0)
+    distance_completion_pct: float = Field(ge=0)
+    long_run_completion_pct: float = Field(ge=0)
+
+
+class PlanSessionProgress(DashboardSchema):
+    """One prescribed session matched to imported activity evidence."""
+
+    scheduled_date: date
+    kind: str = Field(min_length=1)
+    title: str = Field(min_length=1)
+    target_distance_km: float = Field(ge=0)
+    status: Literal["upcoming", "due", "completed", "partial", "substituted", "missed"]
+    matched_activity_date: date | None
+    matched_activity_name: str | None
+    actual_distance_km: float | None = Field(default=None, ge=0)
+    actual_pace_seconds_per_km: float | None = Field(default=None, gt=0)
+    classified_as: str | None
+    distance_completion_pct: float | None = Field(default=None, ge=0)
+    pace_status: Literal[
+        "within_range",
+        "faster_than_planned",
+        "slower_than_planned",
+        "not_applicable",
+        "unavailable",
+    ]
+
+
+class PlanVersionSummary(DashboardSchema):
+    """A compact, immutable training-plan revision summary."""
+
+    plan_id: UUID
+    version: int = Field(ge=1)
+    status: Literal["active", "superseded"]
+    evidence_as_of_date: date
+    created_at: datetime
+    superseded_at: datetime | None
+    recent_weekly_distance_km: float = Field(ge=0)
+    first_week_target_km: float = Field(ge=0)
+    peak_week_target_km: float = Field(ge=0)
+    peak_long_run_km: float = Field(ge=0)
+
+
+class ActivePlanTracking(DashboardSchema):
+    """Plan adherence and version history returned by the coaching API."""
+
+    goal_id: UUID
+    plan_id: UUID
+    active_version: int = Field(ge=1)
+    as_of_date: date
+    plan_start_date: date
+    race_date: date
+    status: Literal["not_started", "in_progress", "completed"]
+    completed_weeks: int = Field(ge=0)
+    total_weeks: int = Field(ge=1)
+    current_week_number: int | None = Field(default=None, ge=1)
+    planned_distance_to_date_km: float = Field(ge=0)
+    actual_distance_to_date_km: float = Field(ge=0)
+    adherence_pct: float | None = Field(default=None, ge=0)
+    weeks: tuple[PlanWeekProgress, ...] = Field(min_length=1)
+    sessions: tuple[PlanSessionProgress, ...] = Field(min_length=1)
+    recommendation_code: str = Field(min_length=1)
+    recommendation: str = Field(min_length=1)
+    versions: tuple[PlanVersionSummary, ...] = Field(min_length=1)
+
+
+class UploadedRunActivity(DashboardSchema):
+    """Sanitized activity facts returned after a private FIT upload."""
+
+    title: str = Field(min_length=1)
+    local_date: date
+    distance_km: float | None = Field(default=None, ge=0)
+    elapsed_time_seconds: float | None = Field(default=None, ge=0)
+    laps: int = Field(ge=0)
+    trackpoints: int = Field(ge=0)
+
+
+class UploadedRunImportSummary(DashboardSchema):
+    """Persistence counters for one accepted upload."""
+
+    import_batch_id: UUID
+    total_files: int = Field(ge=0)
+    accepted_files: int = Field(ge=0)
+    duplicate_files: int = Field(ge=0)
+    matched_files: int = Field(ge=0)
+    unmatched_files: int = Field(ge=0)
+    ambiguous_files: int = Field(ge=0)
+    source_links_created: int = Field(ge=0)
+    activities_enriched: int = Field(ge=0)
+    activities_unchanged: int = Field(ge=0)
+    laps_written: int = Field(ge=0)
+    trackpoints_written: int = Field(ge=0)
+    quality_issues_created: int = Field(ge=0)
+    activities_created: int = Field(ge=0)
+
+
+class UploadedRunAnalytics(DashboardSchema):
+    """Deterministic analytics refresh counters returned by the upload."""
+
+    as_of_date: date
+    activities_processed: int = Field(ge=0)
+    activities_with_profile: int = Field(ge=0)
+    activities_with_heart_rate_load: int = Field(ge=0)
+    activity_metrics_created: int = Field(ge=0)
+    activity_metrics_reused: int = Field(ge=0)
+    daily_loads_created: int = Field(ge=0)
+    daily_loads_updated: int = Field(ge=0)
+    daily_loads_reused: int = Field(ge=0)
+
+
+class UploadedRunPlanRefresh(DashboardSchema):
+    """Plan refresh decision made after importing a run."""
+
+    status: Literal["deferred_active_week", "refreshed"]
+    new_version_created: bool
+
+
+class UploadedRunResult(DashboardSchema):
+    """Validated end-to-end dashboard response for one uploaded run."""
+
+    status: Literal["updated", "duplicate"]
+    activity: UploadedRunActivity
+    parser_findings: int = Field(ge=0)
+    import_summary: UploadedRunImportSummary | None
+    analytics: UploadedRunAnalytics
+    plan_refresh: UploadedRunPlanRefresh
+    tracking: ActivePlanTracking
+
+
+class CoachingReply(DashboardSchema):
+    """Reviewed conversational coaching answer and its evidence references."""
+
+    answer: str = Field(min_length=1, max_length=4_000)
+    evidence_ids: tuple[str, ...] = Field(min_length=1, max_length=8)
+    limitations: tuple[str, ...] = Field(max_length=5)
+    mode: Literal["openai", "deterministic"]
+    model: str | None
+    context_version: str = Field(min_length=1)
+    prompt_version: str = Field(min_length=1)

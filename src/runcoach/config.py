@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     athlete_id: UUID | None = None
     llm_provider: Literal["disabled", "openai"] = "disabled"
     openai_model: str | None = None
+    openai_timeout_seconds: float = Field(default=20.0, gt=0, le=120)
     openai_api_key: SecretStr | None = Field(
         default=None,
         validation_alias="OPENAI_API_KEY",

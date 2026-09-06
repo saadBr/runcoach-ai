@@ -1,12 +1,13 @@
 """Import standalone Strava FIT activities created after the last bulk export."""
 
 import argparse
+import gzip
 import json
-import re
 from dataclasses import asdict, dataclass
 from datetime import date
+from hashlib import sha256
 from pathlib import Path
-from typing import Literal
+from typing import Protocol
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
@@ -20,21 +21,22 @@ from runcoach.db.sensors import (
 )
 from runcoach.db.session import SessionFactory
 from runcoach.ingestion.contracts import (
-    ActivityKind,
-    NormalizedActivity,
     SourceProvider,
 )
 from runcoach.ingestion.fit import parse_fit_activity
-
-type ActivityType = Literal["race", "workout", "easy", "long", "unknown", "other"]
-
-RUNNING_KINDS = frozenset(
-    {
-        ActivityKind.RUNNING,
-        ActivityKind.TRAIL_RUNNING,
-        ActivityKind.TREADMILL_RUNNING,
-    }
+from runcoach.ingestion.strava_fit import (
+    RUNNING_ACTIVITY_KINDS,
+    infer_activity_type,
+    single_running_activity,
+    title_from_filename,
 )
+
+RUNNING_KINDS = RUNNING_ACTIVITY_KINDS
+
+
+class _BinaryReader(Protocol):
+    def read(self, size: int = -1) -> bytes:
+        """Read up to size bytes from the source."""
 
 
 @dataclass(slots=True)
@@ -43,6 +45,8 @@ class CollectionStatistics:
 
     files_discovered: int = 0
     files_selected: int = 0
+    known_files_skipped: int = 0
+    bulk_export_files_skipped: int = 0
     files_before_since: int = 0
     non_running_files: int = 0
     parse_failures: int = 0
@@ -97,47 +101,24 @@ def _fit_paths(activity_dir: Path) -> list[Path]:
     )
 
 
-def _title_from_filename(path: Path) -> str:
-    name = path.name
-    if name.lower().endswith(".fit.gz"):
-        name = name[:-7]
-    elif name.lower().endswith(".fit"):
-        name = name[:-4]
-
-    name = re.sub(r" \(\d+\)$", "", name)
-    return re.sub(r"_+", " ", name).strip()
+def _stream_sha256(stream: _BinaryReader) -> str:
+    digest = sha256()
+    for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+        digest.update(chunk)
+    return digest.hexdigest()
 
 
-def _activity_type(title: str) -> ActivityType:
-    lowered = title.casefold()
-    if "race" in lowered:
-        return "race"
-    if "long" in lowered:
-        return "long"
-    if "easy" in lowered or "aerobic" in lowered:
-        return "easy"
-    workout_markers = (
-        "hill",
-        "interval",
-        "session",
-        "tempo",
-        "threshold",
-        "time trial",
-        "wu",
-        "warm up",
-    )
-    if any(marker in lowered for marker in workout_markers):
-        return "workout"
-    return "unknown"
+def _content_sha256(path: Path) -> str:
+    if path.name.lower().endswith(".fit.gz"):
+        with gzip.open(path, "rb") as stream:
+            return _stream_sha256(stream)
+    with path.open("rb") as stream:
+        return _stream_sha256(stream)
 
 
-def _single_running_activity(
-    activities: tuple[NormalizedActivity, ...],
-) -> NormalizedActivity | None:
-    running = [activity for activity in activities if activity.activity_kind in RUNNING_KINDS]
-    if len(running) != 1:
-        return None
-    return running[0]
+def _is_bulk_export_fit(path: Path) -> bool:
+    name = path.name.lower()
+    return name.endswith(".fit.gz") and name[:-7].isdigit()
 
 
 def _collect_inputs(
@@ -146,6 +127,8 @@ def _collect_inputs(
     athlete_id: UUID,
     athlete_timezone: ZoneInfo,
     since: date,
+    known_content_sha256: frozenset[str] = frozenset(),
+    skip_unseen_bulk_export_files: bool = False,
 ) -> tuple[tuple[SensorActivityInput, ...], CollectionStatistics]:
     statistics = CollectionStatistics()
     inputs: list[SensorActivityInput] = []
@@ -153,9 +136,16 @@ def _collect_inputs(
     statistics.files_discovered = len(paths)
 
     for path in paths:
+        if _content_sha256(path) in known_content_sha256:
+            statistics.known_files_skipped += 1
+            continue
+        if skip_unseen_bulk_export_files and _is_bulk_export_fit(path):
+            statistics.bulk_export_files_skipped += 1
+            continue
+
         result = parse_fit_activity(path, athlete_id, SourceProvider.STRAVA)
         statistics.parser_findings += len(result.findings)
-        normalized = _single_running_activity(result.activities)
+        normalized = single_running_activity(result.activities)
         if normalized is None:
             if result.activities:
                 statistics.non_running_files += 1
@@ -168,7 +158,7 @@ def _collect_inputs(
             statistics.files_before_since += 1
             continue
 
-        title = _title_from_filename(path)
+        title = title_from_filename(path)
         normalized = normalized.model_copy(
             update={
                 "name": title,
@@ -191,12 +181,18 @@ def _collect_inputs(
                     media_type="application/octet-stream",
                 ),
                 activity=normalized,
-                activity_type=_activity_type(title),
+                activity_type=infer_activity_type(title),
             )
         )
 
     statistics.files_selected = len(inputs)
     return tuple(inputs), statistics
+
+
+# Compatibility aliases retained for callers and tests written before the upload workflow.
+_title_from_filename = title_from_filename
+_activity_type = infer_activity_type
+_single_running_activity = single_running_activity
 
 
 def main(arguments: list[str] | None = None) -> int:

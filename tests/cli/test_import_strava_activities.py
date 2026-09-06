@@ -1,5 +1,6 @@
 """Tests for importing standalone Strava FIT downloads."""
 
+import gzip
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID
@@ -135,3 +136,64 @@ def test_collection_selects_only_recent_running_fit_files(
     assert statistics.files_before_since == 1
     assert statistics.non_running_files == 1
     assert statistics.parse_failures == 0
+
+
+def test_collection_skips_known_hash_before_parsing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    known_path = tmp_path / "Known_Run.fit"
+    new_path = tmp_path / "New_Run.fit"
+    bulk_export_path = tmp_path / "123456789.fit.gz"
+    known_path.write_bytes(b"known")
+    new_path.write_bytes(b"new")
+    with gzip.open(bulk_export_path, "wb") as stream:
+        stream.write(b"historical bulk export")
+    parsed_paths: list[Path] = []
+
+    def fake_parse(
+        path: Path,
+        athlete_id: UUID,
+        provider: SourceProvider,
+    ) -> ParseResult:
+        parsed_paths.append(path)
+        return ParseResult(
+            activities=(
+                _parsed_activity(
+                    path=path,
+                    start_time=datetime(2026, 9, 7, 5, 0, tzinfo=UTC),
+                    kind=ActivityKind.RUNNING,
+                    digest_character="d",
+                ),
+            )
+        )
+
+    monkeypatch.setattr(import_strava_activities, "parse_fit_activity", fake_parse)
+
+    inputs, statistics = import_strava_activities._collect_inputs(
+        activity_dir=tmp_path,
+        athlete_id=ATHLETE_ID,
+        athlete_timezone=ZoneInfo("Africa/Casablanca"),
+        since=datetime(2026, 9, 1, tzinfo=UTC).date(),
+        known_content_sha256=frozenset({import_strava_activities._content_sha256(known_path)}),
+        skip_unseen_bulk_export_files=True,
+    )
+
+    assert parsed_paths == [new_path]
+    assert len(inputs) == 1
+    assert statistics.files_discovered == 3
+    assert statistics.files_selected == 1
+    assert statistics.known_files_skipped == 1
+    assert statistics.bulk_export_files_skipped == 1
+
+
+def test_compressed_fit_hash_uses_decompressed_content(tmp_path: Path) -> None:
+    compressed_path = tmp_path / "123.fit.gz"
+    plain_path = tmp_path / "123.fit"
+    plain_path.write_bytes(b"same FIT payload")
+    with gzip.open(compressed_path, "wb") as stream:
+        stream.write(b"same FIT payload")
+
+    assert import_strava_activities._content_sha256(compressed_path) == (
+        import_strava_activities._content_sha256(plain_path)
+    )
