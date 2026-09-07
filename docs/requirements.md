@@ -3,19 +3,17 @@
 ## Status
 
 - Project: RunCoach AI
-- Document state: Initial approved baseline
-- Last updated: 2026-08-23
+- Document state: Approved baseline with multi-athlete onboarding extension
+- Last updated: 2026-09-07
 - MVP duration: Four weeks
 
 ## Actors
 
 ### Athlete
 
-The single authenticated-by-deployment user who imports activities, configures goals, reviews
-analytics, and requests coaching recommendations.
-
-The MVP has one athlete, but persisted domain records retain an `athlete_id` so that
-multi-athlete support does not require redesigning core relationships.
+A registered user who imports their own activities, configures goals, reviews analytics, and
+requests coaching recommendations. Every authenticated account maps to exactly one athlete domain
+identity in the first multi-athlete release.
 
 ### System operator
 
@@ -32,14 +30,15 @@ this provider is disabled.
 
 ### FR-001: Athlete profile
 
-The system shall store one athlete profile with configurable timezone and non-sensitive
-display settings.
+The system shall store an athlete profile with configurable timezone and non-sensitive display
+settings for every registered account.
 
 Acceptance:
 
 - The profile has a stable `athlete_id`.
 - Timezone-sensitive dates can be reproduced.
-- Multi-user authentication is not required for the MVP.
+- Athlete-owned records are selected from the authenticated session rather than a browser-supplied
+  athlete identifier.
 
 ### FR-002: Physiology configuration
 
@@ -230,6 +229,23 @@ Acceptance:
 - The UI obtains persisted data through defined application/API interfaces.
 - It does not duplicate deterministic analytical formulas.
 
+### FR-017: Authenticated Strava onboarding
+
+Every new athlete shall complete authenticated onboarding with a Strava history archive before
+receiving predictions, coaching, or a generated plan.
+
+Acceptance:
+
+- Signup requires name, email, password, timezone, race goal, and one Strava export ZIP.
+- Account creation and archive processing use resumable states rather than one long database
+  transaction.
+- Invalid, unsafe, or empty archives leave the account pending with a sanitized retryable result.
+- `ready` requires a completed Strava import, a persisted goal, calculated analytics, and a
+  generated training plan.
+- Login sessions are revocable and only opaque token hashes are stored.
+- Cross-athlete model research requires a separate versioned opt-in that can be withdrawn.
+- Withdrawing research consent does not delete the athlete's account or disable coaching.
+
 ## Non-functional requirements
 
 ### NFR-001: Privacy
@@ -238,6 +254,10 @@ Acceptance:
 - The cloud demonstration must use sanitized or synthetic data.
 - Raw GPS tracks must not be sent to an LLM by default.
 - Secrets must be supplied through environment variables.
+- Requests must derive athlete ownership from an authenticated session and reject cross-athlete
+  access.
+- Passwords, bearer tokens, and raw Strava archives must never appear in application logs.
+- Model-research exports must exclude athletes whose latest consent decision is not `granted`.
 
 ### NFR-002: Reproducibility
 
@@ -294,7 +314,8 @@ No high-volume or low-latency Big Data performance claim is required.
 ## Constraints
 
 - The baseline release must remain deployable, reproducible, maintainable, and supported by validated evidence.
-- The initial release supports one athlete while retaining `athlete_id` throughout the architecture.
+- The existing local single-athlete mode remains supported while authenticated multi-athlete
+  onboarding is introduced incrementally.
 - Exact export adapters cannot be finalized until real files are safely inspected.
 - Garmin API access is not an MVP dependency.
 - Historical Strava records may have less sensor data than recent Garmin records.
@@ -306,7 +327,7 @@ No high-volume or low-latency Big Data performance claim is required.
 
 ### Must have
 
-FR-001 through FR-016, with the ML feature allowed to remain explicitly experimental if it
+FR-001 through FR-017, with the ML feature allowed to remain explicitly experimental if it
 does not pass its evidence gate.
 
 ### Should have
@@ -326,7 +347,6 @@ does not pass its evidence gate.
 
 - Direct Garmin API integration.
 - Real-time run coaching.
-- Multi-user identity, authentication, and authorization.
 - Distributed event-streaming infrastructure and independently deployed domain services.
 - Custom web and mobile clients.
 

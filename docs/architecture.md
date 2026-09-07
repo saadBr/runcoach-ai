@@ -94,6 +94,8 @@ The verified implementation currently provides:
 - A provider-neutral conversational coaching boundary over privacy-minimized deterministic
   evidence, with cited structured responses and deterministic fallback behavior.
 - An optional stateless OpenAI Responses API adapter using strict structured output.
+- A persistence foundation for one-to-one athlete accounts, revocable opaque sessions, mandatory
+  Strava-history onboarding, and append-only model-research consent.
 - Health-checked PostgreSQL, FastAPI, and Streamlit Compose services.
 
 ### Planned capabilities
@@ -102,7 +104,9 @@ The following remain planned and require their own implementation and validation
 
 - Persisted automatic rescheduling beyond the first detailed training week.
 - A machine-learning experiment selected after a label audit.
-- Controlled LangGraph orchestration and persisted coaching-run audit records.
+- Login and signup services, tenant-scoped authorization, safe Strava ZIP processing, and the
+  onboarding interface over the implemented persistence foundation.
+- Controlled LangGraph orchestration over the implemented coaching-run audit records.
 - Sanitized cloud deployment.
 
 ## System context
@@ -671,7 +675,8 @@ privacy, model evaluation, or external-provider boundaries.
 - Final machine-learning target after the performance-label audit.
 - Cloud provider and database lifecycle based on current operational evidence.
 - Whether import processing benefits from a separate cloud runtime process.
-- Authentication and authorization requirements if private multi-athlete access is introduced.
+- Selection of an external identity provider versus versioned first-party password hashing before
+  authenticated multi-athlete access is exposed publicly.
 - Whether a scheduled recalculation process provides value beyond explicit versioned commands.
 
 ## Architectural invariants

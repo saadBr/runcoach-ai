@@ -36,7 +36,7 @@ diagnoses or guarantee race outcomes.
 
 The target platform includes:
 
-- A single-athlete profile with an `athlete_id` retained for future multi-athlete support.
+- Athlete-scoped profiles with a compatibility path for the original local single-athlete mode.
 - Garmin and Strava export ingestion through FIT, FIT.GZ, GPX, CSV, and JSON adapters.
 - Validation, normalization, provenance tracking, and cross-source deduplication.
 - PostgreSQL storage for activities, laps, trackpoints, derived metrics, and model outputs.
@@ -73,6 +73,8 @@ The operational data pipeline currently provides:
   a useful provider-disabled fallback.
 - Durable minimized audit records for every successful coaching answer, including ordered
   evidence, generation, safety-review steps, and the approved or fallback recommendation.
+- A migration-backed multi-athlete onboarding foundation with one-to-one accounts, revocable
+  opaque sessions, mandatory Strava-import progress, and separate research-consent history.
 - An optional stateless OpenAI Responses API adapter with schema-constrained output; numeric
   predictions and training prescriptions remain owned by versioned RunCoach code.
 - Independent, health-checked API, dashboard, and PostgreSQL Compose services.

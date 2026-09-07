@@ -3,17 +3,18 @@
 ## Status
 
 - Project: RunCoach AI
-- Document state: Initial logical model
-- Last updated: 2026-08-23
+- Document state: Implemented through the multi-athlete onboarding foundation
+- Last updated: 2026-09-07
 - Database: PostgreSQL 17
 - ORM and migrations: SQLAlchemy 2 and Alembic
 
-The logical model is approved, but the first domain migration will be created only after the
-actual export formats and minimum ingestion fields are inspected.
+The logical model is implemented incrementally through Alembic migrations. Authentication and
+onboarding tables establish the multi-athlete boundary; login services and Strava archive
+orchestration remain separate application checkpoints.
 
 ## Modeling principles
 
-- Retain `athlete_id` even though the MVP has one athlete.
+- Scope every athlete-owned record through a stable `athlete_id`.
 - Separate imported source records from canonical activities.
 - Preserve provenance rather than overwriting conflicting source values.
 - Use canonical units and explicit missing values.
@@ -51,6 +52,10 @@ PostgreSQL enum types may be introduced only when their migration cost is justif
 
 ```mermaid
 erDiagram
+    ATHLETES ||--|| USER_ACCOUNTS : authenticates_as
+    USER_ACCOUNTS ||--o{ AUTH_SESSIONS : opens
+    ATHLETES ||--|| ATHLETE_ONBOARDING : progresses_through
+    ATHLETES ||--o{ RESEARCH_CONSENTS : decides
     ATHLETES ||--o{ PHYSIOLOGY_PROFILES : has
     ATHLETES ||--o{ GOALS : sets
     ATHLETES ||--o{ ACTIVITIES : performs
@@ -85,7 +90,74 @@ erDiagram
     PREDICTIONS }o--o{ COACHING_RUNS : informs
 ```
 
-## Athlete and goal tables
+## Identity, onboarding, athlete, and goal tables
+
+### `user_accounts`
+
+One row represents a login identity mapped one-to-one to an athlete. Authentication secrets are
+kept separate from the athlete domain profile.
+
+| Column | Type | Rules |
+|---|---|---|
+| `id` | UUID | Primary key |
+| `athlete_id` | UUID | Unique foreign key to `athletes` |
+| `email_normalized` | Text | Required and unique normalized login identifier |
+| `password_hash` | Text | Required versioned password hash; plaintext is never stored |
+| `status` | Text | `pending_onboarding`, `active`, or `disabled` |
+| `last_login_at` | Timestamptz | Nullable |
+| `created_at` | Timestamptz | Required |
+| `updated_at` | Timestamptz | Required |
+
+### `auth_sessions`
+
+Stores revocable opaque sessions. Only a SHA-256 token hash is persisted; the bearer token is
+returned once and is never recoverable from the database.
+
+| Column | Type | Rules |
+|---|---|---|
+| `id` | UUID | Primary key |
+| `user_account_id` | UUID | Foreign key to `user_accounts` |
+| `token_hash` | Character(64) | Required and unique |
+| `created_at` | Timestamptz | Required |
+| `expires_at` | Timestamptz | Required and later than creation |
+| `last_seen_at` | Timestamptz | Required and not earlier than creation |
+| `revoked_at` | Timestamptz | Nullable |
+
+### `athlete_onboarding`
+
+One row per athlete records progress through mandatory Strava-history onboarding.
+
+| Column | Type | Rules |
+|---|---|---|
+| `athlete_id` | UUID | Primary key and foreign key to `athletes` |
+| `status` | Text | Versioned onboarding state constraint |
+| `strava_import_batch_id` | UUID | Nullable foreign key to the accepted import batch |
+| `goal_id` | UUID | Nullable foreign key to the onboarding race goal |
+| `training_plan_id` | UUID | Nullable foreign key to the generated plan |
+| `failure_code` | Text | Nullable sanitized machine-readable failure |
+| `completed_at` | Timestamptz | Nullable |
+| `created_at` | Timestamptz | Required |
+| `updated_at` | Timestamptz | Required |
+
+An onboarding record cannot become `ready` until it references an accepted Strava import, goal,
+and generated training plan. A failed state requires a sanitized failure code so signup can be
+resumed without exposing archive contents.
+
+### `research_consents`
+
+Append-only decisions governing whether pseudonymized derived features and verified outcomes may
+be used in cross-athlete model research.
+
+| Column | Type | Rules |
+|---|---|---|
+| `id` | UUID | Primary key |
+| `athlete_id` | UUID | Foreign key to `athletes` |
+| `decision` | Text | `granted` or `withdrawn` |
+| `policy_version` | Text | Required consent-text version |
+| `recorded_at` | Timestamptz | Required |
+
+Account creation and coaching access do not imply research consent. The latest recorded decision
+controls future dataset exports without erasing the decision history.
 
 ### `athletes`
 
@@ -99,8 +171,9 @@ One row represents an athlete domain identity.
 | `created_at` | Timestamptz | Required |
 | `updated_at` | Timestamptz | Required |
 
-The MVP enforces one configured athlete at the application layer, not by removing
-`athlete_id` from related tables.
+The original local installation uses one configured athlete. The multi-athlete application derives
+the active `athlete_id` from an authenticated session; accepting an athlete identifier supplied by
+the browser is prohibited.
 
 ### `physiology_profiles`
 

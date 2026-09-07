@@ -63,6 +63,177 @@ class Athlete(TimestampMixin, Base):
     timezone: Mapped[str] = mapped_column(String(64), nullable=False)
 
 
+class UserAccount(TimestampMixin, Base):
+    """A login identity mapped one-to-one to an athlete domain identity."""
+
+    __tablename__ = "user_accounts"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending_onboarding', 'active', 'disabled')",
+            name="user_accounts_status",
+        ),
+        UniqueConstraint("athlete_id", name="uq_user_accounts_athlete"),
+        UniqueConstraint("email_normalized", name="uq_user_accounts_email"),
+        Index("ix_user_accounts_status", "status"),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        primary_key=True,
+        default=uuid4,
+    )
+    athlete_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("athletes.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    email_normalized: Mapped[str] = mapped_column(String(320), nullable=False)
+    password_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        server_default=text("'pending_onboarding'"),
+    )
+    last_login_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+
+class AuthSession(Base):
+    """One revocable opaque login session; only the token hash is persisted."""
+
+    __tablename__ = "auth_sessions"
+    __table_args__ = (
+        CheckConstraint(
+            "expires_at > created_at",
+            name="auth_sessions_expiry",
+        ),
+        CheckConstraint(
+            "last_seen_at >= created_at",
+            name="auth_sessions_last_seen",
+        ),
+        UniqueConstraint("token_hash", name="uq_auth_sessions_token_hash"),
+        Index("ix_auth_sessions_account_expires", "user_account_id", "expires_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        primary_key=True,
+        default=uuid4,
+    )
+    user_account_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("user_accounts.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    token_hash: Mapped[str] = mapped_column(CHAR(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    revoked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+
+class AthleteOnboarding(TimestampMixin, Base):
+    """Durable progress through required Strava-history onboarding."""
+
+    __tablename__ = "athlete_onboarding"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ("
+            "'awaiting_strava_archive', 'validating_archive', 'importing_history', "
+            "'calculating_analytics', 'generating_plan', 'ready', 'failed'"
+            ")",
+            name="athlete_onboarding_status",
+        ),
+        CheckConstraint(
+            "status <> 'ready' OR ("
+            "strava_import_batch_id IS NOT NULL AND goal_id IS NOT NULL "
+            "AND training_plan_id IS NOT NULL"
+            ")",
+            name="athlete_onboarding_ready",
+        ),
+        CheckConstraint(
+            "status <> 'failed' OR failure_code IS NOT NULL",
+            name="athlete_onboarding_failure",
+        ),
+        Index("ix_athlete_onboarding_status", "status"),
+    )
+
+    athlete_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("athletes.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    status: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        server_default=text("'awaiting_strava_archive'"),
+    )
+    strava_import_batch_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("import_batches.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    goal_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("goals.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    training_plan_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("training_plans.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    failure_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+
+class ResearchConsent(Base):
+    """Append-only consent decision for cross-athlete model research."""
+
+    __tablename__ = "research_consents"
+    __table_args__ = (
+        CheckConstraint(
+            "decision IN ('granted', 'withdrawn')",
+            name="research_consents_decision",
+        ),
+        Index("ix_research_consents_athlete_recorded", "athlete_id", "recorded_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        primary_key=True,
+        default=uuid4,
+    )
+    athlete_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("athletes.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    decision: Mapped[str] = mapped_column(String(16), nullable=False)
+    policy_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    recorded_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+
 class ImportBatch(Base):
     """One durable and auditable execution of the ingestion pipeline."""
 
