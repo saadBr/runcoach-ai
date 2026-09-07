@@ -134,6 +134,22 @@ docker compose up -d db
 uv run alembic upgrade head
 ```
 
+### Preserve and claim an existing local athlete
+
+The authenticated onboarding migration does not delete or replace an existing athlete. After
+applying migrations, attach an account to the athlete already identified by
+`RUNCOACH_ATHLETE_ID` with:
+
+```powershell
+uv run python -m runcoach.cli.bootstrap_account
+```
+
+The command prompts for email and password interactively so credentials do not appear in shell
+history. It verifies that the existing athlete already has an accepted Strava import, exactly one
+active primary goal, and exactly one active plan. It then creates the account and marks onboarding
+ready while preserving the athlete UUID, activities, analytics, personal bests, goal, and plan.
+Running it again with the same credentials is idempotent. It does not grant model-research consent.
+
 Run the API:
 
 ```powershell

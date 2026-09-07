@@ -224,6 +224,12 @@ clarity. Golden files must:
 
 ## Database tests
 
+Identity persistence tests verify one account per athlete, unique normalized login identifiers,
+non-recoverable session-token storage, mandatory onboarding evidence, and append-only research
+consent. Existing-athlete bootstrap tests assert that credentials are attached without replacing
+the athlete, activities, active goal, or active training plan and that repeat execution is
+idempotent only for matching credentials.
+
 Use PostgreSQL rather than SQLite for integration behavior.
 
 Test:

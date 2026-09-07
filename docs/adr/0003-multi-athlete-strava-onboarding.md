@@ -82,6 +82,8 @@ future research exports without disabling the athlete's account or personal coac
 - `auth_sessions`: revocable opaque session hashes and expiration metadata.
 - `athlete_onboarding`: required Strava import, goal, plan, progress, and sanitized failure state.
 - `research_consents`: append-only granted or withdrawn decisions tied to a policy version.
+- `runcoach.cli.bootstrap_account`: an interactive, idempotent compatibility command that claims
+  the configured existing athlete only after verifying persisted Strava, goal, and plan evidence.
 
 Authentication services, archive ingestion, API authorization, and Streamlit screens are separate
 verified checkpoints. The existence of these tables does not claim that public authentication is
@@ -174,4 +176,3 @@ Review this decision before:
 - `docs/adr/0002-personal-data-handling.md`
 - `docs/testing-strategy.md`
 - `docs/deployment.md`
-
