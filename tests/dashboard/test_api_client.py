@@ -72,6 +72,64 @@ def test_performance_uses_read_only_analytics_endpoint(
     assert captured_urls == ["http://localhost:8000/api/v1/analytics/performance"]
 
 
+def test_label_audit_client_reads_and_updates_private_review_queue(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: list[tuple[str, str, bytes | None]] = []
+
+    def fake_urlopen(request: Request, timeout: float) -> FakeResponse:
+        del timeout
+        captured.append((request.full_url, request.get_method(), cast(bytes | None, request.data)))
+        return FakeResponse(b'{"verified_rows":6}')
+
+    monkeypatch.setattr(api_client, "urlopen", fake_urlopen)
+    client = RunCoachApiClient("http://localhost:8000")
+    review_token = "a" * 64
+
+    queue = client.get_performance_label_audit(limit=1)
+    updated = client.review_performance_candidate(
+        review_token=review_token,
+        review_status="verified",
+        review_label="verified_race",
+        verified_elapsed_time_seconds=1_128,
+        review_notes="Official result",
+    )
+
+    assert queue["verified_rows"] == 6
+    assert updated["verified_rows"] == 6
+    assert captured[0] == (
+        "http://localhost:8000/api/v1/analytics/performance/label-audit?"
+        "offset=0&limit=1&review_status=unreviewed",
+        "GET",
+        None,
+    )
+    assert captured[1][:2] == (
+        f"http://localhost:8000/api/v1/analytics/performance/label-audit/{review_token}",
+        "PUT",
+    )
+    assert json.loads((captured[1][2] or b"").decode()) == {
+        "review_status": "verified",
+        "review_label": "verified_race",
+        "verified_elapsed_time_seconds": 1_128,
+        "review_notes": "Official result",
+    }
+
+
+def test_label_audit_client_rejects_invalid_pagination() -> None:
+    client = RunCoachApiClient("http://localhost:8000")
+
+    with pytest.raises(ValueError, match="offset"):
+        client.get_performance_label_audit(offset=-1)
+    with pytest.raises(ValueError, match="limit"):
+        client.get_performance_label_audit(limit=101)
+
+    with pytest.raises(ValueError, match="review token"):
+        client.review_performance_candidate(
+            review_token="not-a-token",
+            review_status="excluded",
+        )
+
+
 def test_training_plan_encodes_goal_parameters(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

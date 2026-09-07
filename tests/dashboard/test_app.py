@@ -196,6 +196,48 @@ PERFORMANCE_PAYLOAD = {
     "limitations": ["Experimental estimate; chronological validation is pending."],
 }
 
+LABEL_AUDIT_PAYLOAD = {
+    "dataset_version": "performance_training_features_v3",
+    "total_rows": 70,
+    "verified_rows": 5,
+    "excluded_rows": 0,
+    "unreviewed_rows": 65,
+    "offset": 0,
+    "returned_rows": 1,
+    "candidates": [
+        {
+            "review_token": "a" * 64,
+            "achieved_at": "2026-07-01T08:00:00Z",
+            "matched_distance": "5k",
+            "measured_distance_m": 5005.0,
+            "recorded_elapsed_time_seconds": 1260.0,
+            "distance_deviation_pct": 0.1,
+            "session_kind": "unclassified",
+            "review_status": "unreviewed",
+            "review_label": None,
+            "verified_elapsed_time_seconds": None,
+            "review_notes": None,
+        }
+    ],
+    "validation": {
+        "status": "descriptive_only",
+        "verified_labels": 5,
+        "chronological_targets": 4,
+        "candidate_model_eligible": False,
+        "eligibility_reasons": ["Only 5 verified labels are available; at least 30 are required."],
+        "aggregate_metrics": [
+            {
+                "baseline": "riegel_best_prior",
+                "predictions": 4,
+                "mean_absolute_error_seconds": 539.5,
+                "median_absolute_error_seconds": 113.1,
+                "mean_absolute_percentage_error": 5.6,
+                "mean_signed_error_seconds": -512.6,
+            }
+        ],
+    },
+}
+
 TRAINING_PLAN_PAYLOAD = {
     "algorithm_version": "goal_plan_preview_v1",
     "status": "preview_not_persisted",
@@ -383,6 +425,10 @@ class StubAnalyticsHandler(BaseHTTPRequestHandler):
             self._respond(PERFORMANCE_PAYLOAD)
             return
 
+        if request_url.path == "/api/v1/analytics/performance/label-audit":
+            self._respond(LABEL_AUDIT_PAYLOAD)
+            return
+
         if request_url.path == "/api/v1/coaching/plan-preview":
             self._respond(TRAINING_PLAN_PAYLOAD)
             return
@@ -467,6 +513,9 @@ def test_dashboard_renders_validated_analytics(
     assert "Model status" in [metric.label for metric in app.metric]
     assert "Current anchor" in [metric.label for metric in app.metric]
     assert "Training history" in [metric.label for metric in app.metric]
+    assert "Reviewed" in [metric.label for metric in app.metric]
+    assert "Verified efforts" in [metric.label for metric in app.metric]
+    assert "Chronological targets" in [metric.label for metric in app.metric]
     assert "Goal assessment" in [metric.label for metric in app.metric]
     assert "Active version" in [metric.label for metric in app.metric]
     assert "Distance adherence" in [metric.label for metric in app.metric]

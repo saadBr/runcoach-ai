@@ -3,6 +3,7 @@
 import json
 import re
 from collections.abc import Sequence
+from datetime import date
 from typing import Literal, Protocol, cast
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -23,8 +24,8 @@ from runcoach.db.training_plans import (
     TrainingPlanQueryError,
 )
 
-COACHING_CONTEXT_VERSION = "coaching_context_v1"
-COACHING_PROMPT_VERSION = "evidence_coach_v1"
+COACHING_CONTEXT_VERSION = "coaching_context_v2"
+COACHING_PROMPT_VERSION = "evidence_coach_v2"
 MAX_CONVERSATION_TURNS = 8
 
 type EvidenceValue = str | int | float | bool | None
@@ -348,12 +349,65 @@ class DatabaseCoachingContextLoader:
                 },
             )
         )
+        planned_sessions = tuple(_mapping(item) for item in _sequence(preview.get("first_week")))
+        completed_sessions = tuple(
+            session
+            for session in tracking.sessions
+            if session.status in {"completed", "partial", "substituted"}
+            and session.matched_activity_date is not None
+        )
+        if completed_sessions:
+            latest = max(
+                completed_sessions,
+                key=lambda session: session.matched_activity_date or date.min,
+            )
+            activity_date = latest.matched_activity_date
+            if activity_date is None:
+                raise CoachingChatError("Completed plan session is missing its activity date.")
+            planned_session = next(
+                (
+                    item
+                    for item in planned_sessions
+                    if str(item.get("scheduled_date")) == latest.scheduled_date.isoformat()
+                    and str(item.get("title")) == latest.title
+                ),
+                {},
+            )
+            evidence.append(
+                EvidenceItem(
+                    evidence_id="plan:latest-session",
+                    category="session_review",
+                    summary=(
+                        f"Latest matched run on {activity_date.isoformat()}: "
+                        f"{latest.actual_distance_km:.1f} km at "
+                        f"{_pace(latest.actual_pace_seconds_per_km)} against "
+                        f"{latest.target_distance_km:.1f} km of {latest.title.lower()}; "
+                        f"pace was {latest.pace_status.replace('_', ' ')}."
+                    ),
+                    facts={
+                        "scheduled_date": latest.scheduled_date.isoformat(),
+                        "activity_date": activity_date.isoformat(),
+                        "activity_name": latest.matched_activity_name,
+                        "planned_kind": latest.kind,
+                        "planned_title": latest.title,
+                        "target_distance_km": latest.target_distance_km,
+                        "actual_distance_km": latest.actual_distance_km,
+                        "actual_pace_seconds_per_km": latest.actual_pace_seconds_per_km,
+                        "actual_pace": _pace(latest.actual_pace_seconds_per_km),
+                        "classified_as": latest.classified_as,
+                        "distance_completion_pct": latest.distance_completion_pct,
+                        "session_status": latest.status,
+                        "pace_status": latest.pace_status,
+                        "purpose": str(planned_session.get("purpose", "")),
+                    },
+                )
+            )
+
         pending_sessions = tuple(
             session
             for session in tracking.sessions
             if session.status in {"upcoming", "due", "partial"}
         )[:3]
-        planned_sessions = tuple(_mapping(item) for item in _sequence(preview.get("first_week")))
         for index, session in enumerate(pending_sessions, start=1):
             planned_session = next(
                 (
@@ -558,6 +612,7 @@ def _deterministic_reply(question: str, context: CoachingContext) -> GeneratedCo
     )
     tracking = context.item("plan:tracking")
     goal = context.item("goal:active")
+    latest_session = context.item("plan:latest-session")
     next_sessions = _selected_items(context, "plan:next-session:")
 
     if _MEDICAL_TERMS.search(question):
@@ -574,6 +629,57 @@ def _deterministic_reply(question: str, context: CoachingContext) -> GeneratedCo
             ),
             evidence_ids=evidence_ids,
             limitations=("RunCoach has no symptom examination or clinical evidence.",),
+        )
+
+    asks_session_review = any(
+        term in lowered
+        for term in (
+            "how did",
+            "how was my run",
+            "review my run",
+            "run review",
+            "debrief",
+            "last run",
+            "latest run",
+            "today's run",
+            "todays run",
+        )
+    )
+    if latest_session is not None and asks_session_review:
+        actual_distance = _number(latest_session.facts.get("actual_distance_km"))
+        target_distance = _number(latest_session.facts.get("target_distance_km"))
+        actual_pace = str(latest_session.facts.get("actual_pace", "unavailable"))
+        planned_kind = str(latest_session.facts.get("planned_kind", "run"))
+        pace_status = str(latest_session.facts.get("pace_status", "unavailable"))
+        answer = (
+            f"Your latest run was {actual_distance:.1f} km at {actual_pace}, compared with "
+            f"{target_distance:.1f} km planned for the {planned_kind} session."
+        )
+        if pace_status == "easier_than_planned" and planned_kind in {"easy", "recovery"}:
+            answer += (
+                " The pace was easier than planned, which is acceptable for an easy or "
+                "recovery day when the effort stayed comfortable."
+            )
+        elif pace_status == "within_range":
+            answer += " The average pace was within the prescribed range."
+        elif pace_status == "faster_than_planned" and planned_kind in {"easy", "recovery"}:
+            answer += (
+                " The average pace was faster than prescribed; avoid turning easy mileage "
+                "into another hard session."
+            )
+        elif pace_status == "not_applicable":
+            answer += (
+                " Whole-run average pace is not used to grade this session because warm-up "
+                "and recovery segments would distort the comparison."
+            )
+        session_evidence_ids = [latest_session.evidence_id]
+        if tracking is not None:
+            answer += f" {tracking.summary}"
+            session_evidence_ids.append(tracking.evidence_id)
+        return GeneratedCoachingReply(
+            answer=answer,
+            evidence_ids=tuple(session_evidence_ids),
+            limitations=context.limitations[:2],
         )
 
     if next_sessions and any(

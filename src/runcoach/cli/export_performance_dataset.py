@@ -60,6 +60,12 @@ WINDOW_COLUMNS = (
     "race_sessions",
     "unclassified_sessions",
 )
+REVIEW_COLUMNS = (
+    "review_status",
+    "review_label",
+    "verified_elapsed_time_seconds",
+    "review_notes",
+)
 
 
 def _positive_tolerance(value: str) -> float:
@@ -183,13 +189,33 @@ def _csv_row(
 
 
 def _write_dataset(path: Path, dataset: PerformanceTrainingDataset) -> None:
+    existing_reviews: dict[str, dict[str, str]] = {}
+    if path.exists():
+        try:
+            with path.open(encoding="utf-8-sig", newline="") as input_file:
+                reader = csv.DictReader(input_file)
+                if not {"activity_id", *REVIEW_COLUMNS}.issubset(reader.fieldnames or ()):
+                    raise ValueError("Existing label-audit CSV has an incompatible schema.")
+                existing_reviews = {
+                    row["activity_id"]: row for row in reader if row.get("activity_id")
+                }
+        except OSError as error:
+            raise ValueError(f"Could not preserve existing label reviews: {error}") from error
+
+    rows = [_csv_row(row, dataset_version=dataset.dataset_version) for row in dataset.rows]
+    for row in rows:
+        existing = existing_reviews.get(str(row["activity_id"]))
+        if existing is None:
+            continue
+        if row["review_status"] == "unreviewed":
+            for field in REVIEW_COLUMNS:
+                row[field] = existing.get(field, "")
+
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8", newline="") as output_file:
         writer = csv.DictWriter(output_file, fieldnames=_fieldnames())
         writer.writeheader()
-        writer.writerows(
-            _csv_row(row, dataset_version=dataset.dataset_version) for row in dataset.rows
-        )
+        writer.writerows(rows)
 
 
 def main(arguments: list[str] | None = None) -> int:

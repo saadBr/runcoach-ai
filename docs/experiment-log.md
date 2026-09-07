@@ -68,8 +68,8 @@ encode private filenames or account identifiers.
 | ID | Title | Status | Dataset | Primary decision |
 | --- | --- | --- | --- | --- |
 | EXP-000 | Experimental protocol baseline | Completed | None | Establish rules before model evaluation |
-| EXP-001 | Activity and performance label audit | Proposed | Pending import | Determine whether race-time modeling is eligible |
-| EXP-002 | Deterministic race-prediction baselines | Proposed | Pending EXP-001 | Quantify Riegel and recent-performance error |
+| EXP-001 | Activity and performance label audit | Executed; insufficient labels | Private audit export | Collect more verified outcomes before supervised modeling |
+| EXP-002 | Deterministic race-prediction baselines | Executed descriptively | EXP-001 verified subset | Retain comparison evidence; do not claim validation |
 | EXP-003 | Regularized race-time residual model | Proposed | Pending EXP-001 and EXP-002 | Test improvement over deterministic baselines |
 | EXP-004 | Readiness-classification feasibility | Proposed | Pending label audit | Contingency only if a defensible observable label exists |
 | EXP-005 | Coaching workflow evidence fidelity | Proposed | Synthetic and sanitized cases | Verify recommendation traceability and safety |
@@ -107,8 +107,8 @@ The protocol was adopted. This is a methodological result, not a predictive-perf
 
 ### Status
 
-Proposed. Execution begins only after representative Garmin and Strava exports are obtained and
-inspected safely.
+Executed on the current private export. The result is an eligibility decision, not approval to
+train or publish a learned predictor.
 
 ### Motivation
 
@@ -151,13 +151,22 @@ temporal coverage, and uncertainty.
 
 ### Results
 
-Not available. The activity exports have not yet been inspected.
+The frozen audit export contains 70 candidate standard-distance activities: 5 manually verified
+outcomes and 65 unreviewed candidates. The verified subset covers two 5K efforts and one each at
+10K, half marathon, and marathon. Four later events can receive a prediction from at least one
+strictly earlier verified event.
+
+The subset fails the provisional engineering gates of 30 verified outcomes and 8 later
+chronological evaluation events. The supervised residual model is therefore ineligible. The
+next action is targeted manual review of genuine races, time trials, and maximum-effort sessions;
+unreviewed ordinary training runs must not be promoted merely to increase sample size.
 
 ## EXP-002: Deterministic race-prediction baselines
 
 ### Status
 
-Proposed and dependent on EXP-001.
+Executed descriptively with `performance_validation_v1`. EXP-001 does not contain enough labels
+for a validation claim or candidate-model comparison.
 
 ### Question
 
@@ -190,7 +199,23 @@ documented exponent. Any personalized exponent must be estimated from training d
 
 ### Results
 
-Not available.
+| Baseline | Predictions | MAE seconds | Median AE seconds | MAPE | Signed error seconds |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Best-prior Riegel | 4 | 539.522 | 113.082 | 5.6033% | -512.615 |
+| Most recent same distance | 1 | 53.000 | 53.000 | 4.6986% | 53.000 |
+| Historical same-distance median | 1 | 53.000 | 53.000 | 4.6986% | 53.000 |
+
+Negative signed error means an optimistic prediction. The Riegel mean is dominated by a large
+optimistic marathon error; its median is substantially smaller but still based on only four
+targets. The same-distance result is the single later 5K effort, so it measures improvement from
+the previous verified 5K rather than stable generalization. These measurements confirm why the
+generic formula must not be presented as the product's validated forecast.
+
+Reproduce the private detailed artifact with:
+
+```powershell
+uv run python -m runcoach.cli.validate_performance_predictions
+```
 
 ## EXP-003: Regularized race-time residual model
 
@@ -408,5 +433,7 @@ All shareable evidence must use sanitized labels and non-identifying identifiers
 
 ## Current next experiment
 
-EXP-001 is the next eligible experiment. Its execution is blocked only by the absence of inspected
-Garmin and Strava exports. No race-time model result should be claimed before that audit.
+EXP-001 and the descriptive EXP-002 baseline run are complete. The next eligible work is targeted
+manual review of genuine performance candidates, followed by chronological evaluation of
+`training_context_fitness_v2` only when enough earlier target evidence exists. EXP-003 remains
+blocked by the label-count and chronological-evaluation gates.

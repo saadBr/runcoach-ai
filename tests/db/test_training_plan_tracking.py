@@ -189,9 +189,9 @@ def test_tracking_reports_current_week_volume_and_long_run(db_session: Session) 
     assert result.active_version == 2
     assert result.current_week_number == 1
     assert result.completed_weeks == 0
-    assert result.planned_distance_to_date_km == pytest.approx(70.0)
+    assert result.planned_distance_to_date_km == pytest.approx(54.0)
     assert result.actual_distance_to_date_km == pytest.approx(55.0)
-    assert result.adherence_pct == pytest.approx(78.6)
+    assert result.adherence_pct == pytest.approx(101.9)
     assert result.weeks[0].actual_runs == 3
     assert result.weeks[0].actual_long_run_km == pytest.approx(25.0)
     assert result.weeks[0].long_run_completion_pct == pytest.approx(104.2)
@@ -202,6 +202,41 @@ def test_tracking_reports_current_week_volume_and_long_run(db_session: Session) 
         "completed",
     ]
     assert result.recommendation_code == "first_week_complete"
+
+
+def test_tracking_treats_slightly_longer_easy_run_as_on_plan(db_session: Session) -> None:
+    _add_plan_history(db_session)
+    first_run = db_session.query(Activity).filter_by(local_start_date=date(2026, 9, 7)).one()
+    first_run.distance_m = Decimal("12000")
+    first_run.moving_time_ms = 4_800_000
+    db_session.commit()
+
+    result = TrainingPlanTrackingService(db_session).overview(
+        athlete_id=ATHLETE_ID,
+        as_of_date=date(2026, 9, 7),
+    )
+
+    assert result.planned_distance_to_date_km == pytest.approx(10.0)
+    assert result.actual_distance_to_date_km == pytest.approx(12.0)
+    assert result.adherence_pct == pytest.approx(120.0)
+    assert result.sessions[0].status == "completed"
+    assert result.sessions[0].pace_status == "easier_than_planned"
+    assert result.recommendation_code == "continue_as_planned"
+
+
+def test_tracking_flags_material_excess_volume(db_session: Session) -> None:
+    _add_plan_history(db_session)
+    first_run = db_session.query(Activity).filter_by(local_start_date=date(2026, 9, 7)).one()
+    first_run.distance_m = Decimal("16000")
+    db_session.commit()
+
+    result = TrainingPlanTrackingService(db_session).overview(
+        athlete_id=ATHLETE_ID,
+        as_of_date=date(2026, 9, 7),
+    )
+
+    assert result.adherence_pct == pytest.approx(160.0)
+    assert result.recommendation_code == "reduce_optional_volume"
 
 
 def test_tracking_marks_completed_weeks_and_returns_history(db_session: Session) -> None:

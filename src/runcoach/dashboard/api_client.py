@@ -41,6 +41,58 @@ class RunCoachApiClient:
 
         return self._get_json("/api/v1/analytics/performance")
 
+    def get_performance_label_audit(
+        self,
+        *,
+        review_status: str | None = "unreviewed",
+        offset: int = 0,
+        limit: int = 20,
+    ) -> JsonObject:
+        """Return a bounded private performance-review queue."""
+
+        if offset < 0:
+            raise ValueError("Label-audit offset cannot be negative.")
+        if not 1 <= limit <= 100:
+            raise ValueError("Label-audit limit must be between one and 100.")
+        parameters = {"offset": str(offset), "limit": str(limit)}
+        if review_status is not None:
+            parameters["review_status"] = review_status
+        return self._get_json(f"/api/v1/analytics/performance/label-audit?{urlencode(parameters)}")
+
+    def review_performance_candidate(
+        self,
+        *,
+        review_token: str,
+        review_status: str,
+        review_label: str | None = None,
+        verified_elapsed_time_seconds: float | None = None,
+        review_notes: str | None = None,
+    ) -> JsonObject:
+        """Persist one explicit label decision and return refreshed validation state."""
+
+        if len(review_token) != 64 or any(
+            character not in "0123456789abcdef" for character in review_token
+        ):
+            raise ValueError(
+                "Performance review token must be 64 lowercase hexadecimal characters."
+            )
+
+        body = json.dumps(
+            {
+                "review_status": review_status,
+                "review_label": review_label,
+                "verified_elapsed_time_seconds": verified_elapsed_time_seconds,
+                "review_notes": review_notes,
+            },
+            separators=(",", ":"),
+        ).encode("utf-8")
+        return self._request_json(
+            f"/api/v1/analytics/performance/label-audit/{review_token}",
+            method="PUT",
+            data=body,
+            content_type="application/json",
+        )
+
     def get_training_plan(
         self,
         *,

@@ -1,6 +1,6 @@
 """Goal-based coaching API endpoints backed by deterministic evidence."""
 
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Annotated
@@ -32,6 +32,10 @@ from runcoach.coaching.uploads import (
 )
 from runcoach.config import Settings, get_settings
 from runcoach.db.analytics import AnalyticsPersistenceError
+from runcoach.db.coaching_audit import (
+    CoachingAuditPersistenceError,
+    CoachingAuditPersistenceService,
+)
 from runcoach.db.models import Athlete
 from runcoach.db.sensors import SensorPersistenceError
 from runcoach.db.session import get_db_session
@@ -507,9 +511,11 @@ def coaching_chat(
 ) -> CoachingReply:
     """Answer from minimized deterministic evidence, with optional OpenAI interpretation."""
 
+    athlete_id = _configured_athlete_id(settings)
+    started_at = datetime.now(UTC)
     try:
-        return build_conversational_coach(database_session, settings).answer(
-            athlete_id=_configured_athlete_id(settings),
+        reply = build_conversational_coach(database_session, settings).answer(
+            athlete_id=athlete_id,
             question=body.message,
             conversation=body.conversation,
         )
@@ -518,6 +524,21 @@ def coaching_chat(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=str(error),
         ) from error
+    try:
+        CoachingAuditPersistenceService(database_session).persist_completed(
+            athlete_id=athlete_id,
+            question=body.message,
+            conversation_turns=len(body.conversation),
+            reply=reply,
+            provider=settings.llm_provider,
+            started_at=started_at,
+        )
+    except CoachingAuditPersistenceError as error:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="The coaching answer was generated but its audit record could not be saved.",
+        ) from error
+    return reply
 
 
 @router.post("/runs", response_model=RunUploadResponse)

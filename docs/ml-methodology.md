@@ -186,6 +186,20 @@ and 365-day evidence. This produces useful current-fitness output before the lab
 enough for a defensible supervised model, but it remains an experimental baseline and must be
 evaluated chronologically against the baselines above.
 
+`performance_validation_v1` implements the prerequisite walk-forward baseline evaluation from
+a frozen private label-audit export. For every target it excludes observations at the same or a
+later timestamp, records the exact source observations, and reports aggregate and per-distance
+MAE, median absolute error, MAPE, and signed error. Detailed predictions remain under ignored
+private storage; only non-identifying aggregate evidence may be reported publicly.
+
+The local label-review interface processes one candidate at a time and permits only four explicit
+outcomes: verified race, verified time trial, verified maximum effort, or excluded. A verified
+outcome requires a positive reviewed time; all other outcomes prohibit a target label. Updates
+replace the ignored CSV atomically and rerun chronological validation immediately. Dataset
+regeneration preserves prior manual decisions by activity identity. Across the HTTP boundary the
+private identity and title are replaced by an opaque dataset-scoped review token and a derived
+session class. These review endpoints are disabled in the production environment.
+
 ## Candidate features
 
 Every feature has an `as_of_time` strictly earlier than the target event start.

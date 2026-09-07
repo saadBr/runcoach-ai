@@ -340,6 +340,8 @@ Test:
 - Provider timeout produces fallback.
 - Provider-disabled execution remains useful.
 - Graph state and step audit records are persisted.
+- Raw questions and browser conversation history are absent from persisted minimized state.
+- A coaching answer is not returned as successful when its audit transaction fails.
 
 Network-backed provider tests require an explicit marker and are excluded from normal CI.
 

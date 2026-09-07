@@ -8,6 +8,7 @@ from runcoach.dashboard.schemas import (
     AnalyticsOverview,
     AnalyticsTrends,
     CoachingReply,
+    PerformanceLabelAudit,
     PerformanceOverview,
     PersistedTrainingPlan,
     TrainingPlanPreview,
@@ -251,6 +252,57 @@ def test_performance_schema_parses_evidence_and_fitness_estimate() -> None:
     assert performance.verified_labels == 1
     assert performance.current_fitness.training.runs_365d == 100
     assert performance.current_fitness.estimates[0].fitness_potential_time_seconds == 2464.0
+
+
+def test_performance_label_audit_schema_parses_review_and_validation() -> None:
+    audit = PerformanceLabelAudit.model_validate(
+        {
+            "dataset_version": "performance_training_features_v3",
+            "total_rows": 70,
+            "verified_rows": 5,
+            "excluded_rows": 10,
+            "unreviewed_rows": 55,
+            "offset": 0,
+            "returned_rows": 1,
+            "candidates": [
+                {
+                    "review_token": "a" * 64,
+                    "achieved_at": "2026-07-01T08:00:00Z",
+                    "matched_distance": "5k",
+                    "measured_distance_m": 5005.0,
+                    "recorded_elapsed_time_seconds": 1260.0,
+                    "distance_deviation_pct": 0.1,
+                    "session_kind": "unclassified",
+                    "review_status": "unreviewed",
+                    "review_label": None,
+                    "verified_elapsed_time_seconds": None,
+                    "review_notes": None,
+                }
+            ],
+            "validation": {
+                "status": "descriptive_only",
+                "verified_labels": 5,
+                "chronological_targets": 4,
+                "candidate_model_eligible": False,
+                "eligibility_reasons": ["More labels are required."],
+                "aggregate_metrics": [
+                    {
+                        "baseline": "riegel_best_prior",
+                        "predictions": 4,
+                        "mean_absolute_error_seconds": 539.5,
+                        "median_absolute_error_seconds": 113.1,
+                        "mean_absolute_percentage_error": 5.6,
+                        "mean_signed_error_seconds": -512.6,
+                    }
+                ],
+            },
+        }
+    )
+
+    assert audit.total_rows == 70
+    assert audit.candidates[0].matched_distance.value == "5k"
+    assert audit.candidates[0].review_status.value == "unreviewed"
+    assert audit.validation.aggregate_metrics[0].predictions == 4
 
 
 def test_training_plan_schema_parses_goal_sessions_and_weeks() -> None:

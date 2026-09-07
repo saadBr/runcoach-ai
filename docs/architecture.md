@@ -352,6 +352,8 @@ The API is a typed boundary over persisted deterministic results and narrowly sc
 | `GET /health/ready` | Database-backed readiness |
 | `GET /api/v1/analytics/overview` | Current or exact-date analytical summary |
 | `GET /api/v1/analytics/trends` | Calendar-week training and daily workload series |
+| `GET /api/v1/analytics/performance/label-audit` | Local minimized performance-review queue |
+| `PUT /api/v1/analytics/performance/label-audit/{review_token}` | Save one local label and rerun validation |
 | `GET /api/v1/coaching/plans/active/tracking` | Active plan adherence and recommendation |
 | `POST /api/v1/coaching/runs` | Stream one FIT run, import it, and refresh coaching state |
 | `POST /api/v1/coaching/chat` | Explain minimized current evidence conversationally |
@@ -366,6 +368,8 @@ The API is a typed boundary over persisted deterministic results and narrowly sc
   the ignored private directory, and deletes the staged file after parsing.
 - Domain failures map to stable HTTP behavior.
 - Aggregate endpoints expose no athlete UUID, source filename, credential, or raw coordinate.
+- Local label-review responses replace activity identities with opaque dataset-scoped tokens,
+  omit private titles, and are unavailable in the production environment.
 - The chat endpoint accepts at most eight prior turns and exposes evidence IDs, limitations,
   execution mode, context version, and prompt version in every response.
 - New collections require pagination and explicit filtering contracts.
@@ -408,6 +412,8 @@ Dashboard responsibilities include:
 - Showing missing-data coverage and method provenance.
 - Preserving empty calendar weeks on chart time axes.
 - Reporting unavailable values rather than manufacturing zeros.
+- Reviewing private candidate performances one at a time through a minimized, local-only API
+  contract that immediately refreshes chronological validation.
 - Transporting a user-selected FIT payload to the controlled API command.
 - Holding bounded conversational history in the browser session and presenting cited coaching
   evidence and limitations.
@@ -441,8 +447,9 @@ snapshots. Refreshing after new imports reuses an identical plan or supersedes i
 version when the evidence-derived output changes. Completed-session adherence and the
 conversational coaching API are operational. The first conversational slice assembles a versioned,
 privacy-minimized evidence catalog from analytics, current-fitness, verified-PB, active-goal,
-plan-adherence, and upcoming-session query services. A deterministic template answers common
-questions and remains the fallback whenever model generation is disabled or rejected.
+plan-adherence, latest-completed-session, and upcoming-session query services. A deterministic
+template answers common questions, including post-run debriefs, and remains the fallback whenever
+model generation is disabled or rejected.
 
 ```mermaid
 flowchart LR
@@ -461,9 +468,12 @@ flowchart LR
 The optional OpenAI adapter uses the Responses API with strict JSON-schema output and request
 storage disabled. Generated evidence references are checked against the supplied catalog, and a
 deterministic reviewer rejects unsupported citations, strong guarantees, and selected medical
-language. The current slice keeps conversation history in the Streamlit session and does not
-persist prompts or responses. LangGraph routing, persisted coaching-run audit records, and a
-bounded semantic revision loop remain planned.
+language. Conversation history remains in the Streamlit session and raw questions are not stored.
+Every successful answer now creates one transactional coaching-run record, three ordered audit
+steps for evidence assembly, generation mode, and safety review, plus the final approved or
+deterministic-fallback recommendation. The minimized state retains only a question hash and
+length, workflow versions, evidence identifiers, and counts. LangGraph routing, provider request
+metadata, and a bounded semantic revision loop remain planned.
 
 Raw activity files, athlete identifiers, source filenames, credentials, and raw GPS tracks are
 outside the LLM boundary. The provider receives only aggregate values, deterministic session

@@ -1133,3 +1133,135 @@ class TrainingPlan(Base):
         DateTime(timezone=True),
         nullable=True,
     )
+
+
+class CoachingRun(Base):
+    """One completed execution of the evidence-grounded coaching workflow."""
+
+    __tablename__ = "coaching_runs"
+    __table_args__ = (
+        CheckConstraint(
+            "provider IN ('disabled', 'openai', 'fake')",
+            name="coaching_runs_provider",
+        ),
+        CheckConstraint(
+            "status IN ('running', 'approved', 'fallback', 'failed')",
+            name="coaching_runs_status",
+        ),
+        CheckConstraint(
+            "completed_at IS NULL OR completed_at >= started_at",
+            name="coaching_runs_completion",
+        ),
+        Index("ix_coaching_runs_athlete_started", "athlete_id", "started_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        primary_key=True,
+        default=uuid4,
+    )
+    athlete_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("athletes.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    goal_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("goals.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    graph_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    provider: Mapped[str] = mapped_column(String(16), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    state: Mapped[dict[str, Any]] = mapped_column(JSON_DOCUMENT, nullable=False)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+
+class AgentStep(Base):
+    """One ordered and minimized decision in a persisted coaching run."""
+
+    __tablename__ = "agent_steps"
+    __table_args__ = (
+        CheckConstraint("sequence_number > 0", name="agent_steps_sequence"),
+        CheckConstraint(
+            "decision IN ('continue', 'block', 'revise', 'approve', 'fallback')",
+            name="agent_steps_decision",
+        ),
+        CheckConstraint(
+            "completed_at IS NULL OR completed_at >= started_at",
+            name="agent_steps_completion",
+        ),
+        UniqueConstraint(
+            "coaching_run_id",
+            "sequence_number",
+            name="uq_agent_steps_run_sequence",
+        ),
+        Index("ix_agent_steps_coaching_run", "coaching_run_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        primary_key=True,
+        default=uuid4,
+    )
+    coaching_run_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("coaching_runs.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    sequence_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    agent_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    input_evidence_refs: Mapped[list[str]] = mapped_column(JSON_DOCUMENT, nullable=False)
+    output: Mapped[dict[str, Any]] = mapped_column(JSON_DOCUMENT, nullable=False)
+    decision: Mapped[str] = mapped_column(String(16), nullable=False)
+    provider_request_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    token_usage: Mapped[dict[str, Any] | None] = mapped_column(JSON_DOCUMENT, nullable=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+
+class Recommendation(Base):
+    """Approved or deterministic-fallback recommendation from one coaching run."""
+
+    __tablename__ = "recommendations"
+    __table_args__ = (
+        CheckConstraint(
+            "confidence IN ('not_scored', 'low', 'medium', 'high')",
+            name="recommendations_confidence",
+        ),
+        CheckConstraint(
+            "review_status IN ('approved', 'fallback')",
+            name="recommendations_review_status",
+        ),
+        UniqueConstraint("coaching_run_id", name="uq_recommendations_coaching_run"),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        primary_key=True,
+        default=uuid4,
+    )
+    coaching_run_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("coaching_runs.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    recommendation_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    summary: Mapped[str] = mapped_column(Text, nullable=False)
+    rationale: Mapped[str] = mapped_column(Text, nullable=False)
+    evidence_refs: Mapped[list[str]] = mapped_column(JSON_DOCUMENT, nullable=False)
+    confidence: Mapped[str] = mapped_column(String(16), nullable=False)
+    warnings: Mapped[list[str]] = mapped_column(JSON_DOCUMENT, nullable=False)
+    review_status: Mapped[str] = mapped_column(String(16), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )

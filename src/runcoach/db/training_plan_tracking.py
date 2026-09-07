@@ -21,6 +21,9 @@ class TrainingPlanTrackingError(RuntimeError):
     """Raised when an active plan cannot be evaluated safely."""
 
 
+MINIMUM_OVER_TARGET_DISTANCE_KM = 5.0
+
+
 @dataclass(frozen=True, slots=True)
 class PlanWeekProgress:
     """Actual running completed against one planned calendar week."""
@@ -150,6 +153,20 @@ def _session_payloads(payload: dict[str, Any]) -> list[dict[str, Any]]:
     if not sessions:
         raise TrainingPlanTrackingError("Stored plan first-week sessions are empty.")
     return [_mapping(session, "session") for session in sessions]
+
+
+def _scheduled_distance_to_date(
+    *,
+    payload: dict[str, Any],
+    as_of_date: date,
+) -> float:
+    """Return detailed-session distance due through one date."""
+
+    return sum(
+        _float_value(session.get("distance_km"), "session distance")
+        for session in _session_payloads(payload)
+        if _date_value(session.get("scheduled_date"), "session date") <= as_of_date
+    )
 
 
 def _is_kind_compatible(
@@ -365,7 +382,7 @@ def _pace_status(
     if actual_pace_seconds_per_km < faster:
         return "faster_than_planned"
     if actual_pace_seconds_per_km > slower:
-        return "slower_than_planned"
+        return "easier_than_planned"
     return "within_range"
 
 
@@ -374,6 +391,8 @@ def _coaching_recommendation(
     plan_status: str,
     sessions: tuple[PlanSessionProgress, ...],
     adherence_pct: float | None,
+    planned_distance_to_date_km: float,
+    actual_distance_to_date_km: float,
 ) -> tuple[str, str]:
     critical_kinds = {"quality", "long", "race"}
     missed_critical = next(
@@ -404,11 +423,17 @@ def _coaching_recommendation(
             f"The {partial_critical.title.lower()} was partially completed. Count the work "
             "already done and do not repeat the unfinished portion on the next day.",
         )
-    if adherence_pct is not None and adherence_pct > 115:
+    distance_over_target = actual_distance_to_date_km - planned_distance_to_date_km
+    if (
+        adherence_pct is not None
+        and adherence_pct > 115
+        and distance_over_target >= MINIMUM_OVER_TARGET_DISTANCE_KM
+    ):
         return (
             "reduce_optional_volume",
-            "Completed volume is more than 15 percent above the plan-to-date target. Keep "
-            "the next hard session unchanged only if recovered, and trim optional easy volume.",
+            "Completed volume is both more than 15 percent and at least 5 km above the "
+            "plan-to-date target. Keep the next hard session unchanged only if recovered, "
+            "and trim optional easy volume.",
         )
     next_session = next(
         (session for session in sessions if session.status in {"due", "upcoming"}),
@@ -543,7 +568,13 @@ class TrainingPlanTrackingService:
                 current_week_number = week_number
                 planned_fraction = min((resolved_as_of - start).days + 1, 7) / 7
 
-            planned_to_date += target_distance * planned_fraction
+            if week_number == 1 and week_status == "in_progress":
+                planned_to_date += _scheduled_distance_to_date(
+                    payload=payload,
+                    as_of_date=resolved_as_of,
+                )
+            else:
+                planned_to_date += target_distance * planned_fraction
             actual_to_date += actual_distance
             weeks.append(
                 PlanWeekProgress(
@@ -597,6 +628,8 @@ class TrainingPlanTrackingService:
             plan_status=plan_status,
             sessions=sessions,
             adherence_pct=adherence_pct,
+            planned_distance_to_date_km=rounded_planned,
+            actual_distance_to_date_km=rounded_actual,
         )
         return ActivePlanTracking(
             goal_id=goal.id,

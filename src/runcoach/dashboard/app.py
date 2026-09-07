@@ -17,6 +17,7 @@ from runcoach.dashboard.schemas import (
     AnalyticsOverview,
     AnalyticsTrends,
     CoachingReply,
+    PerformanceLabelAudit,
     PerformanceOverview,
     PersistedTrainingPlan,
     TrainingPlanPreview,
@@ -422,7 +423,7 @@ def render_sensor_coverage(overview: AnalyticsOverview) -> None:
     )
 
 
-def render_performance(performance: PerformanceOverview) -> None:
+def render_performance(performance: PerformanceOverview, api_url: str) -> None:
     """Render verified PB evidence and experimental current-fitness estimates."""
 
     st.subheader("Verified personal bests")
@@ -519,6 +520,122 @@ def render_performance(performance: PerformanceOverview) -> None:
             ),
             language="text",
         )
+    render_performance_label_audit(api_url)
+
+
+def render_performance_label_audit(api_url: str) -> None:
+    """Render one-at-a-time private labeling with immediate validation feedback."""
+
+    st.divider()
+    st.subheader("Improve prediction accuracy")
+    st.caption(
+        "Review standard-distance efforts one at a time. Training runs should be excluded; "
+        "only races, time trials, and genuine maximal efforts become model labels. Decisions "
+        "remain in the ignored private data directory."
+    )
+    try:
+        audit = PerformanceLabelAudit.model_validate(
+            RunCoachApiClient(api_url).get_performance_label_audit(limit=1)
+        )
+    except (DashboardApiError, ValidationError, ValueError) as error:
+        st.info(
+            "The private label queue is not available yet. Run "
+            "`uv run python -m runcoach.cli.export_performance_dataset` once, then refresh."
+        )
+        st.caption(str(error))
+        return
+
+    reviewed = audit.verified_rows + audit.excluded_rows
+    reviewed_column, verified_column, validation_column = st.columns(3)
+    reviewed_column.metric("Reviewed", f"{reviewed} / {audit.total_rows}")
+    verified_column.metric("Verified efforts", audit.verified_rows)
+    validation_column.metric(
+        "Chronological targets",
+        audit.validation.chronological_targets,
+    )
+
+    if audit.validation.candidate_model_eligible:
+        st.success("The reviewed dataset now meets the minimum evaluation sample requirements.")
+    else:
+        st.warning(" ".join(audit.validation.eligibility_reasons))
+
+    if audit.validation.aggregate_metrics:
+        validation_table = pd.DataFrame.from_records(
+            [
+                {
+                    "Baseline": metric.baseline.replace("_", " ").title(),
+                    "Predictions": metric.predictions,
+                    "MAE": format_duration(metric.mean_absolute_error_seconds),
+                    "Median error": format_duration(metric.median_absolute_error_seconds),
+                    "MAPE": f"{metric.mean_absolute_percentage_error:.1f}%",
+                    "Bias (seconds)": round(metric.mean_signed_error_seconds, 1),
+                }
+                for metric in audit.validation.aggregate_metrics
+            ]
+        )
+        st.dataframe(validation_table, hide_index=True, width="stretch")
+
+    if not audit.candidates:
+        st.success("All candidate performances have been reviewed.")
+        return
+
+    candidate = audit.candidates[0]
+    session_description = candidate.session_kind.value.replace("_", " ").title()
+    st.markdown(f"#### {distance_label(candidate.matched_distance)} candidate")
+    st.write(
+        f"**{candidate.achieved_at.date().isoformat()} · {session_description} session**  \n"
+        f"Recorded {format_duration(candidate.recorded_elapsed_time_seconds)} over "
+        f"{candidate.measured_distance_m / 1_000:.3f} km "
+        f"({candidate.distance_deviation_pct:.2f}% from the standard distance)."
+    )
+
+    choices = {
+        "Verified race": "verified_race",
+        "Verified time trial": "verified_time_trial",
+        "Verified max effort": "verified_max_effort",
+        "Exclude: training or non-maximal effort": None,
+    }
+    with st.form("performance_label_review", clear_on_submit=False):
+        selected_choice = str(st.radio("Decision", tuple(choices), horizontal=True))
+        verified_time = st.text_input(
+            "Verified time",
+            value=format_duration(candidate.recorded_elapsed_time_seconds),
+            help="Use M:SS or H:MM:SS. Edit this when an official result differs from FIT time.",
+        )
+        notes = st.text_area(
+            "Review notes (optional)",
+            max_chars=500,
+            placeholder="For example: official chip time, solo time trial, or training run.",
+        )
+        submitted = st.form_submit_button("Save decision and revalidate", type="primary")
+
+    if not submitted:
+        return
+
+    review_label = choices[selected_choice]
+    review_status = "verified" if review_label is not None else "excluded"
+    try:
+        elapsed_seconds = parse_duration(verified_time) if review_label is not None else None
+        updated = PerformanceLabelAudit.model_validate(
+            RunCoachApiClient(api_url).review_performance_candidate(
+                review_token=candidate.review_token,
+                review_status=review_status,
+                review_label=review_label,
+                verified_elapsed_time_seconds=elapsed_seconds,
+                review_notes=notes.strip() or None,
+            )
+        )
+    except (DashboardApiError, ValidationError, ValueError) as error:
+        st.error("The label decision could not be saved.")
+        st.caption(str(error))
+        return
+
+    st.success(
+        f"Decision saved. {updated.unreviewed_rows} candidate(s) remain; chronological "
+        "validation has been refreshed."
+    )
+    st.cache_data.clear()
+    st.rerun()
 
 
 def render_weekly_table(frame: pd.DataFrame) -> None:
@@ -956,7 +1073,7 @@ def main() -> None:
             render_weekly_table(weekly_data)
 
     with performance_tab:
-        render_performance(performance)
+        render_performance(performance, api_url)
 
     with coach_tab:
         render_conversational_coach(api_url)

@@ -4,8 +4,8 @@
 
 - Project: RunCoach AI
 - Document state: Approved workflow with conversational slice implemented
-- Last updated: 2026-09-06
-- Orchestrator: Direct typed pipeline implemented; LangGraph remains planned
+- Last updated: 2026-09-07
+- Orchestrator: Direct typed pipeline with durable execution audit; LangGraph remains planned
 - Number of specialized agents: Five
 - LLM required for deterministic analytics: No
 
@@ -427,6 +427,14 @@ Persist:
 Do not persist hidden chain-of-thought. Store only user-facing rationale, structured decisions,
 and operational metadata.
 
+The implemented persistence slice writes one `coaching_runs` row, three ordered `agent_steps`
+rows (`evidence_context`, `answer_generation`, and `safety_review`), and one `recommendations`
+row in a single transaction. Raw question text and browser-held conversation history are not
+stored. The run state contains the question SHA-256 and length, conversation-turn count, context
+and prompt versions, execution mode, evidence identifiers, and limitation count. OpenAI answers
+end as `approved`; provider-disabled or rejected-provider answers end as deterministic
+`fallback`. The API fails closed if this terminal audit cannot be committed.
+
 ## Failure handling
 
 | Failure | Result |
@@ -441,8 +449,9 @@ and operational metadata.
 | Medical or contradictory language | Revise once or fallback |
 | Persistence failure | Do not present result as saved or approved |
 
-The implemented conversational slice does not persist provider calls. Future persisted coaching
-runs and side effects require idempotency keys based on run and node IDs.
+The implemented conversational slice does not yet retain provider request identifiers or token
+usage because the current transport contract does not expose them. Future retried provider calls
+and other repeatable side effects require idempotency keys based on run and node IDs.
 
 ## Human review
 

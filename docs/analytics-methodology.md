@@ -520,10 +520,15 @@ preferring the scheduled date and then a compatible session on an adjacent date.
 session kind, persisted activity type, and distance support the match; whole-run average pace
 is not used to judge quality sessions because their warm-up and recovery segments would make
 that comparison misleading. A completed, partial, substituted, missed, due, or upcoming state
-is retained in the response. Plan-to-date distance uses full targets for completed weeks and a
-linear calendar-day fraction for the current week; this fraction is a progress indicator rather
-than a prescription that volume must be evenly distributed. Revision history exposes how the
-evidence date, recent weekly volume, first-week load, peak load, and peak long run changed.
+is retained in the response. In the active detailed week, plan-to-date distance is the sum of
+sessions scheduled through the evidence date; completed weeks use their full targets and later
+outline-only weeks use a calendar-day fraction until the rolling schedule replaces them. This
+avoids treating weekly volume as though it were distributed evenly across seven days. A small
+distance overage does not trigger load reduction solely because its percentage is large early in
+the week: the safeguard requires both more than 15 percent and at least 5 km above plan to date.
+Easy and recovery paces below the prescribed speed are reported as easier than planned rather
+than failed pace targets. Revision history exposes how the evidence date, recent weekly volume,
+first-week load, peak load, and peak long run changed.
 
 The plan does not yet persistently reschedule later weeks or react to pain, illness, sleep,
 weather, or unexpected fatigue. The deterministic coaching recommendation explicitly avoids

@@ -85,6 +85,19 @@ def _context() -> CoachingContext:
                 facts={"status": "in_progress", "adherence_pct": 101.0},
             ),
             EvidenceItem(
+                evidence_id="plan:latest-session",
+                category="session_review",
+                summary="Latest run was 12 km at 6:24/km against 10 km easy.",
+                facts={
+                    "activity_date": "2026-09-07",
+                    "planned_kind": "easy",
+                    "target_distance_km": 10.0,
+                    "actual_distance_km": 12.0,
+                    "actual_pace": "6:24/km",
+                    "pace_status": "easier_than_planned",
+                },
+            ),
+            EvidenceItem(
                 evidence_id="plan:next-session:1",
                 category="session",
                 summary=("2026-09-07: Easy aerobic run, 8.5 km at 5:20/km to 5:50/km (upcoming)."),
@@ -141,6 +154,7 @@ class FakeModel:
         ("How fast can I run a 5K?", "fitness:5k", "18:03"),
         ("Is my marathon goal achievable?", "fitness:marathon", "3:11:01"),
         ("What does my current form mean?", "workload:2026-09-06", "form index"),
+        ("How did today's run go?", "plan:latest-session", "easier than planned"),
         ("Summarize my training", "training:history", "143 runs"),
     ),
 )
@@ -459,6 +473,17 @@ def test_database_loader_builds_minimized_context(
             "recommended_target_seconds": 11_461.0,
             "first_week": [
                 {
+                    "scheduled_date": "2026-09-06",
+                    "kind": "easy",
+                    "title": "Recovery run",
+                    "distance_km": 10.0,
+                    "pace": {
+                        "faster_seconds_per_km": 330.0,
+                        "slower_seconds_per_km": 390.0,
+                    },
+                    "purpose": "Absorb prior training.",
+                },
+                {
                     "scheduled_date": "2026-09-07",
                     "kind": "easy",
                     "title": "Easy aerobic run",
@@ -468,11 +493,25 @@ def test_database_loader_builds_minimized_context(
                         "slower_seconds_per_km": 350.0,
                     },
                     "purpose": "Maintain aerobic frequency.",
-                }
+                },
             ],
         },
     )
-    session = SimpleNamespace(
+    completed_session = SimpleNamespace(
+        scheduled_date=date(2026, 9, 6),
+        title="Recovery run",
+        target_distance_km=10.0,
+        status="completed",
+        kind="easy",
+        matched_activity_date=date(2026, 9, 6),
+        matched_activity_name="Morning recovery",
+        actual_distance_km=12.0,
+        actual_pace_seconds_per_km=384.0,
+        classified_as="recovery",
+        distance_completion_pct=120.0,
+        pace_status="easier_than_planned",
+    )
+    upcoming_session = SimpleNamespace(
         scheduled_date=date(2026, 9, 7),
         title="Easy aerobic run",
         target_distance_km=8.5,
@@ -492,7 +531,7 @@ def test_database_loader_builds_minimized_context(
         actual_distance_to_date_km=11.0,
         adherence_pct=110.0,
         recommendation_code="continue_as_planned",
-        sessions=(session,),
+        sessions=(completed_session, upcoming_session),
     )
 
     class AnalyticsService:
@@ -536,10 +575,15 @@ def test_database_loader_builds_minimized_context(
 
     assert "fitness:5k" in context.evidence_ids
     assert "goal:active" in context.evidence_ids
+    assert "plan:latest-session" in context.evidence_ids
     assert "plan:next-session:1" in context.evidence_ids
     next_session = context.item("plan:next-session:1")
     assert next_session is not None
     assert next_session.facts["pace_range"] == "5:20/km to 5:50/km"
+    latest_session = context.item("plan:latest-session")
+    assert latest_session is not None
+    assert latest_session.facts["actual_pace"] == "6:24/km"
+    assert latest_session.facts["pace_status"] == "easier_than_planned"
     serialized = context.model_dump_json()
     assert str(ATHLETE_ID) not in serialized
     assert "latitude" not in serialized

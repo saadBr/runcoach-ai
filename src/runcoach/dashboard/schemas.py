@@ -11,6 +11,7 @@ from runcoach.analytics.performance import (
     PerformanceLabel,
     StandardDistance,
 )
+from runcoach.analytics.performance_label_audit import LabelReviewStatus
 from runcoach.analytics.session_classification import SessionKind
 from runcoach.analytics.training_plan import (
     GoalStatus,
@@ -190,6 +191,58 @@ class PerformanceOverview(DashboardSchema):
     limitations: tuple[str, ...] = Field(min_length=1)
 
 
+class PerformanceLabelCandidate(DashboardSchema):
+    """One minimized private candidate requiring a human decision."""
+
+    review_token: str = Field(pattern=r"^[0-9a-f]{64}$")
+    achieved_at: datetime
+    matched_distance: StandardDistance
+    measured_distance_m: float = Field(gt=0)
+    recorded_elapsed_time_seconds: float = Field(gt=0)
+    distance_deviation_pct: float
+    session_kind: SessionKind
+    review_status: LabelReviewStatus
+    review_label: PerformanceLabel | None
+    verified_elapsed_time_seconds: float | None = Field(default=None, gt=0)
+    review_notes: str | None = Field(default=None, max_length=500)
+
+
+class PerformanceValidationMetric(DashboardSchema):
+    """Aggregate chronological error metrics for one baseline."""
+
+    baseline: str = Field(min_length=1)
+    predictions: int = Field(ge=0)
+    mean_absolute_error_seconds: float = Field(ge=0)
+    median_absolute_error_seconds: float = Field(ge=0)
+    mean_absolute_percentage_error: float = Field(ge=0)
+    mean_signed_error_seconds: float
+
+
+class PerformanceValidationSummary(DashboardSchema):
+    """Current eligibility and aggregate chronological validation state."""
+
+    status: str = Field(min_length=1)
+    verified_labels: int = Field(ge=0)
+    chronological_targets: int = Field(ge=0)
+    candidate_model_eligible: bool
+    eligibility_reasons: tuple[str, ...]
+    aggregate_metrics: tuple[PerformanceValidationMetric, ...]
+
+
+class PerformanceLabelAudit(DashboardSchema):
+    """Paginated private performance review queue."""
+
+    dataset_version: str = Field(min_length=1)
+    total_rows: int = Field(ge=0)
+    verified_rows: int = Field(ge=0)
+    excluded_rows: int = Field(ge=0)
+    unreviewed_rows: int = Field(ge=0)
+    offset: int = Field(ge=0)
+    returned_rows: int = Field(ge=0)
+    candidates: tuple[PerformanceLabelCandidate, ...]
+    validation: PerformanceValidationSummary
+
+
 class TrainingGoal(DashboardSchema):
     """Goal parameters used to create a plan preview."""
 
@@ -295,7 +348,7 @@ class PlanSessionProgress(DashboardSchema):
     pace_status: Literal[
         "within_range",
         "faster_than_planned",
-        "slower_than_planned",
+        "easier_than_planned",
         "not_applicable",
         "unavailable",
     ]

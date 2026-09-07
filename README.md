@@ -71,6 +71,8 @@ The operational data pipeline currently provides:
 - A validated Streamlit dashboard with interactive Plotly visualizations.
 - An evidence-grounded conversational coach with cited facts, deterministic safety review, and
   a useful provider-disabled fallback.
+- Durable minimized audit records for every successful coaching answer, including ordered
+  evidence, generation, safety-review steps, and the approved or fallback recommendation.
 - An optional stateless OpenAI Responses API adapter with schema-constrained output; numeric
   predictions and training prescriptions remain owned by versioned RunCoach code.
 - Independent, health-checked API, dashboard, and PostgreSQL Compose services.
@@ -349,6 +351,28 @@ volume, pace, elevation, heart-rate availability, duration load, explainable tit
 session counts, prior workload state, and prior verified PB evidence. All features stop
 strictly before the candidate starts; unreviewed candidates have no verified target time.
 
+Run leakage-safe chronological baseline validation against that frozen audit export with:
+
+```powershell
+uv run python -m runcoach.cli.validate_performance_predictions
+```
+
+The command writes detailed predictions to the ignored private artifact
+`data/private/ml/performance-validation.json` and prints only aggregate errors and eligibility
+reasons. It evaluates best-prior Riegel, most-recent same-distance, and historical-median
+same-distance baselines. A target can use only manually verified performances with strictly
+earlier timestamps. Results remain descriptive until the predeclared label-count and
+chronological-evaluation gates pass.
+
+The local dashboard also exposes a one-at-a-time **Improve prediction accuracy** reviewer.
+Each decision marks a candidate as a verified race, time trial, maximum effort, or excluded
+training effort; verified times may be corrected to an official result. Saving rewrites the
+ignored CSV atomically and immediately refreshes the chronological validation artifact. A
+fresh dataset export preserves existing manual decisions. The API returns only an opaque review
+token, date, distance, time, and derived session class for this workflow—never the activity UUID
+or private title—and the review endpoints are unavailable when the application environment is
+`production`.
+
 ### Training-plan preview
 
 The coaching API can assess a selected race goal and generate a progressive plan preview:
@@ -386,8 +410,10 @@ Identical evidence reuses the active version. Changed fitness or training eviden
 new plan version and retains the previous snapshot as superseded history. The tracking
 endpoint compares canonical running distance and the longest run with each planned week,
 reports plan-to-date adherence, matches first-week prescriptions to imported activities, and
-exposes the evidence and load targets for every version. Missed quality work is never moved
-onto the following day by the coaching recommendation.
+exposes the evidence and load targets for every version. Detailed-week adherence follows the
+scheduled sessions due to date, allows a small absolute volume tolerance, and treats a slower
+easy or recovery run as easier rather than failed. Missed quality work is never moved onto the
+following day by the coaching recommendation.
 
 ## Analytical dashboard
 
@@ -420,7 +446,14 @@ next marathon on 2027-01-31 and supports a rolling one-year goal horizon. The Co
 questions using minimized current-fitness, workload, goal, adherence, and upcoming-session
 evidence. Each answer returns its evidence identifiers and limitations. OpenAI can explain this
 evidence when configured, but numeric predictions and prescribed training loads remain outputs
-of versioned, tested code.
+of versioned, tested code. After a matched upload, questions such as `How did today's run go?`
+produce a deterministic post-run debrief comparing actual distance and average pace with the
+prescribed session before explaining the next plan action.
+
+Successful coach responses are persisted as a minimized workflow audit. The database stores a
+hash and length for the question rather than its raw text, the applicable context and prompt
+versions, referenced evidence identifiers, three ordered workflow steps, limitations, and the
+final recommendation. A response is not returned as successful when its audit transaction fails.
 
 Conversational coaching works in deterministic mode by default. To enable the optional OpenAI
 interpreter, set these values only in the ignored `.env` file and restart the API:

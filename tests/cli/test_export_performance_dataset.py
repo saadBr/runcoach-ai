@@ -4,6 +4,7 @@ import argparse
 import csv
 import json
 from contextlib import nullcontext
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -108,6 +109,47 @@ def test_write_dataset_flattens_all_training_windows(tmp_path: Path) -> None:
     assert rows[0]["prior_7d_runs"] == "3"
     assert rows[0]["prior_84d_duration_load_minutes"] == "180.0"
     assert rows[0]["prior_365d_quality_sessions"] == "1"
+
+
+def test_write_dataset_preserves_manual_review_when_regenerated(tmp_path: Path) -> None:
+    output = tmp_path / "data" / "private" / "audit.csv"
+    dataset = _dataset()
+    unreviewed_row = dataset.rows[0]
+    unreviewed_dataset = PerformanceTrainingDataset(
+        dataset_version=dataset.dataset_version,
+        audit_version=dataset.audit_version,
+        leakage_rule=dataset.leakage_rule,
+        candidate_rows=1,
+        verified_rows=0,
+        unreviewed_rows=1,
+        model_status="label_audit_required",
+        rows=(
+            replace(
+                unreviewed_row,
+                review_status="unreviewed",
+                review_label=None,
+                verified_elapsed_time_seconds=None,
+                review_notes=None,
+            ),
+        ),
+    )
+    export_performance_dataset._write_dataset(output, unreviewed_dataset)
+    with output.open(encoding="utf-8", newline="") as input_file:
+        rows = list(csv.DictReader(input_file))
+    rows[0]["review_status"] = "excluded"
+    rows[0]["review_notes"] = "Training effort"
+    with output.open("w", encoding="utf-8", newline="") as output_file:
+        writer = csv.DictWriter(output_file, fieldnames=rows[0].keys())
+        writer.writeheader()
+        writer.writerows(rows)
+
+    export_performance_dataset._write_dataset(output, unreviewed_dataset)
+
+    with output.open(encoding="utf-8", newline="") as input_file:
+        preserved = next(iter(csv.DictReader(input_file)))
+    assert preserved["review_status"] == "excluded"
+    assert preserved["review_notes"] == "Training effort"
+    assert preserved["prior_28d_distance_km"] == "30.0"
 
 
 def test_main_exports_under_configured_private_directory(

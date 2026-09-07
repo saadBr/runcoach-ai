@@ -518,8 +518,6 @@ Binary model artifacts are stored outside Git and referenced by checksum.
 | `id` | UUID | Primary key |
 | `athlete_id` | UUID | Foreign key |
 | `goal_id` | UUID | Nullable foreign key |
-| `readiness_snapshot_id` | UUID | Nullable foreign key |
-| `prediction_id` | UUID | Nullable foreign key |
 | `graph_version` | Text | Required |
 | `provider` | Text | Disabled, fake, or configured provider |
 | `status` | Text | Running, approved, fallback, or failed |
@@ -561,6 +559,9 @@ Binary model artifacts are stored outside Git and referenced by checksum.
 | `created_at` | Timestamptz | Required |
 
 A recommendation must never exist without evidence references and a completed safety result.
+The first implemented audit migration stores completed chat workflows. Direct readiness and
+prediction foreign keys are deferred until those documented tables become operational; their
+versioned evidence is currently represented through the minimized evidence-reference list.
 
 ## Deduplication model
 
