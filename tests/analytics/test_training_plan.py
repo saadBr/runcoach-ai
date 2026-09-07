@@ -1,5 +1,6 @@
 """Tests for deterministic goal-based training-plan previews."""
 
+from dataclasses import replace
 from datetime import date
 
 import pytest
@@ -142,9 +143,78 @@ def test_january_2027_marathon_plan_builds_specific_endurance_safely() -> None:
     assert preview.goal.race_date == date(2027, 1, 31)
     assert {week.phase for week in preview.weekly_outline} == set(PlanPhase)
     assert 30 <= max(week.long_run_km for week in preview.weekly_outline) <= 35
-    maximum_safe_volume = preview.weekly_outline[0].target_distance_km / 0.92 * 1.15
+    maximum_safe_volume = preview.recent_weekly_distance_km * 1.15
     assert max(week.target_distance_km for week in preview.weekly_outline) <= (
         maximum_safe_volume + 0.2
+    )
+
+
+def test_marathon_plan_builds_beyond_low_recent_volume_without_tiny_sessions() -> None:
+    fitness = _fitness()
+    fitness = replace(
+        fitness,
+        training=replace(
+            fitness.training,
+            runs_28d=24,
+            distance_28d_km=160.0,
+            runs_84d=60,
+            distance_84d_km=480.0,
+            longest_run_84d_km=24.0,
+        ),
+    )
+
+    preview = build_training_plan_preview(
+        goal=TrainingGoal(
+            distance=StandardDistance.MARATHON,
+            race_date=date(2027, 1, 31),
+            target_time_seconds=None,
+            days_per_week=6,
+        ),
+        fitness=fitness,
+    )
+
+    assert preview.recent_weekly_distance_km == 40
+    assert max(week.target_distance_km for week in preview.weekly_outline) == 60
+    assert min(session.distance_km for session in preview.first_week) >= 5
+    assert sum(session.distance_km for session in preview.first_week) == pytest.approx(
+        preview.weekly_outline[0].target_distance_km,
+        abs=0.2,
+    )
+    quality = next(
+        session for session in preview.first_week if session.kind is PlannedSessionKind.QUALITY
+    )
+    assert "strides" in quality.title
+
+
+def test_low_volume_base_week_uses_fewer_days_instead_of_filler_runs() -> None:
+    fitness = _fitness()
+    fitness = replace(
+        fitness,
+        training=replace(
+            fitness.training,
+            runs_28d=16,
+            distance_28d_km=120.0,
+            runs_84d=42,
+            distance_84d_km=330.0,
+            longest_run_84d_km=20.0,
+        ),
+    )
+
+    preview = build_training_plan_preview(
+        goal=TrainingGoal(
+            distance=StandardDistance.MARATHON,
+            race_date=date(2027, 1, 31),
+            target_time_seconds=None,
+            days_per_week=6,
+        ),
+        fitness=fitness,
+    )
+
+    assert len(preview.first_week) < 6
+    assert min(session.distance_km for session in preview.first_week) >= 5
+    assert sum(session.distance_km for session in preview.first_week) == pytest.approx(
+        preview.weekly_outline[0].target_distance_km,
+        abs=0.2,
     )
 
 

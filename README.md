@@ -73,8 +73,8 @@ The operational data pipeline currently provides:
   a useful provider-disabled fallback.
 - Durable minimized audit records for every successful coaching answer, including ordered
   evidence, generation, safety-review steps, and the approved or fallback recommendation.
-- A migration-backed multi-athlete onboarding foundation with one-to-one accounts, revocable
-  opaque sessions, mandatory Strava-import progress, and separate research-consent history.
+- Multi-athlete signup with one-to-one accounts, revocable opaque sessions, a required bounded
+  Strava ZIP import, resumable onboarding, and separate optional research-consent history.
 - Operational account login, session inspection, logout, and authenticated athlete ownership
   across private analytics and coaching endpoints.
 - An optional stateless OpenAI Responses API adapter with schema-constrained output; numeric
@@ -154,6 +154,22 @@ The optional display name fills an empty existing value but never silently repla
 name. Running it again with the same credentials is idempotent. It does not grant model-research
 consent.
 
+### Create a new athlete account
+
+Choose **Create account** on the dashboard. Registration requires a future race goal, one known
+Strava benchmark effort, and the original Strava account-export ZIP. The account remains pending
+until the ZIP produces at least 10 running activities, the declared benchmark date matches one
+eligible run, deterministic analytics are calculated, and the first plan is persisted. A failed
+or interrupted import can be retried after signing in; private analytics remain inaccessible
+until onboarding reaches `ready`.
+
+The API validates every ZIP member before selectively extracting `activities.csv` and supported
+FIT, FIT.GZ, or GPX activity files into short-lived private storage. It rejects traversal paths,
+links, encrypted entries, duplicate paths, unsupported compression, and bounded-size violations.
+The uploaded archive and extracted files are deleted after the request. When only one verified
+benchmark exists, missing race distances receive a disclosed low-confidence cross-distance
+baseline until the athlete records direct evidence at those distances.
+
 Run the API:
 
 ```powershell
@@ -190,6 +206,7 @@ $headers = @{ Authorization = "Bearer $($login.access_token)" }
 ```
 
 `GET /api/v1/auth/me` returns only display name, timezone, onboarding status, and session expiry.
+`GET /api/v1/auth/onboarding` allows a pending session to resume its required ZIP upload.
 `POST /api/v1/auth/logout` revokes the current token. Health endpoints remain unauthenticated.
 
 ## Private data import
@@ -374,7 +391,7 @@ Invoke-RestMethod -Headers $headers `
 ```
 
 Each personal best includes its activity and evidence identifiers, verification status,
-effort type, source, and algorithm version. `training_context_fitness_v2` distinguishes
+effort type, source, and algorithm version. `training_context_fitness_v3` distinguishes
 flat-course fitness potential from distance-specific race readiness. It recognizes when the
 newest verified effort is embedded inside a longer quality session, transfers improvement
 through the athlete's own PB relationships, and compares current training with the training
@@ -382,6 +399,13 @@ before each PB. Readiness then uses recent frequency, volume, and longest-run su
 response includes both times, an uncertainty range, preparation score, confidence, and
 calculation evidence. The estimator remains experimental until evaluated chronologically;
 the Riegel formula remains only a comparison benchmark.
+
+For every supported distance, the estimator searches a bounded set of the fastest relevant
+activities and calculates the fastest exact-distance effort from cumulative Strava sensor
+samples. When that observed effort is faster than the athlete-confirmed PB—or fills a missing
+distance—it bounds the forecast so the application cannot predict a time slower than performance
+already present in the imported history. It remains low-confidence evidence until the athlete
+confirms it.
 
 Trackpoint evidence can recover exact-distance efforts inside longer sessions, including
 warm-up and cool-down workouts. The evidence query reports both the first crossing from the
@@ -436,12 +460,14 @@ Invoke-RestMethod -Headers $headers -Uri (
 ) | ConvertTo-Json -Depth 8
 ```
 
-`goal_plan_preview_v1` uses the current training-context fitness estimate, trailing 28-day
+`goal_plan_preview_v2` uses the current training-context fitness estimate, trailing 28-day
 volume, target-specific preparation, and the time remaining before race day. It reports goal
 status, the first week as concrete dated sessions, and a full week-by-week volume and focus
 outline. Build weeks progress gradually, every fourth week reduces load, and the final weeks
-taper. The preview endpoint is read-only until the athlete explicitly saves it as the active
-plan.
+taper. It preserves recent volume when runs are consolidated into fewer days, builds toward a
+distance-specific peak when the race horizon safely permits it, and avoids meaningless filler
+runs in the first week. The preview endpoint is read-only until the athlete explicitly saves it
+as the active plan.
 
 Persist the selected goal and plan, retrieve it later, or refresh it after importing new
 activities:

@@ -12,7 +12,7 @@ from sqlalchemy.pool import StaticPool
 
 from runcoach.analytics.performance import StandardDistance
 from runcoach.db.base import Base
-from runcoach.db.models import Activity, Athlete, PersonalBest
+from runcoach.db.models import Activity, Athlete, PersonalBest, Trackpoint
 from runcoach.db.performance_queries import (
     PerformanceQueryError,
     PerformanceQueryService,
@@ -142,10 +142,10 @@ def test_overview_returns_current_records_and_fitness_estimates(
     ]
     assert overview.personal_bests[0].pace_seconds_per_km == pytest.approx(236.2)
     assert overview.prediction_status == "experimental_not_validated"
-    assert overview.prediction_method == "training_context_fitness_v2"
+    assert overview.prediction_method == "training_context_fitness_v3"
     assert overview.verified_labels == 4
     assert overview.interpretation_role == "openai_explains_validated_outputs_only"
-    assert len(overview.limitations) == 4
+    assert len(overview.limitations) == 5
     assert overview.current_fitness.anchor.distance is StandardDistance.FIVE_K
     assert overview.current_fitness.anchor_capacity_factor == 0.985
     assert overview.current_fitness.training.runs_168d == 3
@@ -182,6 +182,80 @@ def test_superseded_record_is_not_returned(db_session: Session) -> None:
 
     assert len(overview.personal_bests) == 4
     assert overview.personal_bests[0].personal_best_id == PERSONAL_BEST_IDS[0]
+
+
+def test_missing_distance_uses_fastest_observed_sensor_effort(
+    db_session: Session,
+) -> None:
+    five_k_activity = _activity(ACTIVITY_IDS[0], month=9)
+    five_k_activity.distance_m = Decimal("5000.000")
+    five_k_activity.elapsed_time_ms = 1_297_000
+    five_k_activity.moving_time_ms = 1_297_000
+    marathon_activity = _activity(ACTIVITY_IDS[1], month=4)
+    marathon_activity.distance_m = Decimal("42195.000")
+    marathon_activity.elapsed_time_ms = 13_800_000
+    marathon_activity.moving_time_ms = 13_800_000
+    db_session.add_all((five_k_activity, marathon_activity))
+    db_session.add(
+        PersonalBest(
+            athlete_id=ATHLETE_ID,
+            activity_id=five_k_activity.id,
+            distance_m=Decimal("5000.000"),
+            elapsed_time_ms=1_380_000,
+            effort_type="provider_best_effort",
+            verification_status="verified_max_effort",
+            verification_source="athlete_declared",
+            achieved_at=five_k_activity.start_time_utc,
+            algorithm_version="declared_v1",
+        )
+    )
+    db_session.add(
+        PersonalBest(
+            athlete_id=ATHLETE_ID,
+            activity_id=marathon_activity.id,
+            distance_m=Decimal("42195.000"),
+            elapsed_time_ms=13_800_000,
+            effort_type="provider_best_effort",
+            verification_status="verified_race",
+            verification_source="athlete_declared",
+            achieved_at=marathon_activity.start_time_utc,
+            algorithm_version="declared_v1",
+        )
+    )
+    db_session.add_all(
+        (
+            Trackpoint(
+                activity_id=five_k_activity.id,
+                sequence_number=0,
+                recorded_at=five_k_activity.start_time_utc,
+                elapsed_ms=0,
+                distance_m=Decimal("0.000"),
+                is_paused=False,
+            ),
+            Trackpoint(
+                activity_id=five_k_activity.id,
+                sequence_number=1,
+                recorded_at=five_k_activity.start_time_utc,
+                elapsed_ms=1_297_000,
+                distance_m=Decimal("5000.000"),
+                is_paused=False,
+            ),
+        )
+    )
+    db_session.commit()
+
+    overview = PerformanceQueryService(db_session).overview(athlete_id=ATHLETE_ID)
+
+    five_k = next(
+        estimate
+        for estimate in overview.current_fitness.estimates
+        if estimate.distance is StandardDistance.FIVE_K
+    )
+    assert five_k.current_pb_seconds == pytest.approx(1_297)
+    assert five_k.race_readiness_time_seconds <= 1_297
+    assert five_k.confidence == "low"
+    assert "Strava activity evidence" in five_k.basis
+    assert len(overview.personal_bests) == 2
 
 
 def test_missing_athlete_is_rejected(db_session: Session) -> None:

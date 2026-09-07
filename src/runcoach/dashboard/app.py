@@ -20,6 +20,7 @@ from runcoach.dashboard.schemas import (
     CoachingReply,
     CurrentAccount,
     LoginSession,
+    OnboardingResult,
     PerformanceLabelAudit,
     PerformanceOverview,
     PersistedTrainingPlan,
@@ -150,30 +151,228 @@ def load_current_account(api_url: str) -> CurrentAccount:
     return CurrentAccount.model_validate(authenticated_api_client(api_url).get_current_account())
 
 
+def load_onboarding_account(api_url: str) -> CurrentAccount:
+    """Validate a session that may still require its Strava history."""
+
+    return CurrentAccount.model_validate(authenticated_api_client(api_url).get_onboarding_account())
+
+
+def upload_onboarding_archive(
+    api_url: str,
+    *,
+    filename: str,
+    content: bytes,
+) -> OnboardingResult:
+    """Upload and validate the required Strava history ZIP."""
+
+    payload = authenticated_api_client(api_url).upload_strava_archive(
+        filename=filename,
+        content=content,
+    )
+    return OnboardingResult.model_validate(payload)
+
+
 def render_login(api_url: str) -> None:
-    """Render the credential gate without persisting secrets outside session memory."""
+    """Render sign-in and required-history registration without retaining passwords."""
 
     st.title("RunCoach AI")
-    st.caption("Sign in to your evidence-backed running coach.")
-    with st.form("account_login"):
-        email = st.text_input("Email", autocomplete="email")
-        password = st.text_input("Password", type="password", autocomplete="current-password")
-        submitted = st.form_submit_button("Sign in", type="primary", use_container_width=True)
+    st.caption("Sign in, or create an evidence-backed plan from your Strava history.")
+    sign_in_tab, signup_tab = st.tabs(("Sign in", "Create account"))
 
-    if not submitted:
-        st.info("New-athlete signup will require a Strava history ZIP before a plan is created.")
-        return
+    with sign_in_tab:
+        with st.form("account_login"):
+            email = st.text_input("Email", autocomplete="email")
+            password = st.text_input(
+                "Password",
+                type="password",
+                autocomplete="current-password",
+            )
+            submitted = st.form_submit_button(
+                "Sign in",
+                type="primary",
+                use_container_width=True,
+            )
 
-    try:
-        session = LoginSession.model_validate(
-            RunCoachApiClient(api_url).login(email=email, password=password)
+        if submitted:
+            try:
+                session = LoginSession.model_validate(
+                    RunCoachApiClient(api_url).login(email=email, password=password)
+                )
+            except (DashboardApiError, ValidationError, ValueError):
+                st.error("Sign-in failed. Check your email and password.")
+            else:
+                st.session_state[SESSION_TOKEN_KEY] = session.access_token
+                st.rerun()
+
+    with signup_tab:
+        st.info(
+            "The original Strava export ZIP is required. RunCoach imports it privately, "
+            "then creates analytics and your first plan."
         )
-    except (DashboardApiError, ValidationError, ValueError):
-        st.error("Sign-in failed. Check your email and password.")
-        return
+        today = date.today()
+        with st.form("account_signup"):
+            display_name = st.text_input("Athlete name")
+            signup_email = st.text_input("Account email", autocomplete="email")
+            signup_password = st.text_input(
+                "Create password",
+                type="password",
+                autocomplete="new-password",
+                help="Use at least 12 characters.",
+            )
+            confirm_password = st.text_input(
+                "Confirm password",
+                type="password",
+                autocomplete="new-password",
+            )
+            timezone_name = st.text_input("IANA timezone", value="Africa/Casablanca")
 
-    st.session_state[SESSION_TOKEN_KEY] = session.access_token
-    st.rerun()
+            st.markdown("#### Race goal")
+            goal_distance = st.selectbox(
+                "Goal distance",
+                options=list(StandardDistance),
+                format_func=distance_label,
+            )
+            race_date_value = st.date_input(
+                "Goal race date",
+                value=today + timedelta(weeks=16),
+                min_value=today + timedelta(days=1),
+                max_value=date(today.year + 2, 12, 31),
+            )
+            target_time = st.text_input(
+                "Target time (optional)",
+                help="Use M:SS or H:MM:SS.",
+            )
+            days_per_week = st.slider(
+                "Planned running days per week",
+                min_value=3,
+                max_value=7,
+                value=5,
+            )
+
+            st.markdown("#### One known Strava best effort")
+            benchmark_distance = st.selectbox(
+                "Benchmark distance",
+                options=list(StandardDistance),
+                format_func=distance_label,
+            )
+            benchmark_time = st.text_input(
+                "Benchmark time",
+                placeholder="For example 41:04 or 3:41:06",
+            )
+            benchmark_date_value = st.date_input(
+                "Benchmark activity date",
+                value=today,
+                max_value=today,
+            )
+            benchmark_label = st.selectbox(
+                "Benchmark type",
+                options=(
+                    "verified_race",
+                    "verified_time_trial",
+                    "verified_max_effort",
+                ),
+                format_func=lambda value: value.replace("_", " ").title(),
+            )
+            strava_archive = st.file_uploader(
+                "Strava history ZIP (required)",
+                type=["zip"],
+                help="Upload the original archive from Strava's account export.",
+            )
+            research_consent = st.checkbox(
+                "Allow de-identified features to support future model research",
+                value=False,
+                help="Optional. Raw activities and route coordinates are never shared.",
+            )
+            signup_submitted = st.form_submit_button(
+                "Create account and plan",
+                type="primary",
+                use_container_width=True,
+            )
+
+        if not signup_submitted:
+            return
+        if strava_archive is None:
+            st.error("A Strava history ZIP is required to create an athlete plan.")
+            return
+        if signup_password != confirm_password:
+            st.error("Passwords do not match.")
+            return
+
+        try:
+            benchmark_seconds = parse_duration(benchmark_time)
+            target_seconds = parse_duration(target_time) if target_time.strip() else None
+            if not isinstance(race_date_value, date) or not isinstance(benchmark_date_value, date):
+                raise ValueError("Choose one goal date and one benchmark date.")
+            registration = LoginSession.model_validate(
+                RunCoachApiClient(api_url).register(
+                    {
+                        "display_name": display_name,
+                        "email": signup_email,
+                        "password": signup_password,
+                        "timezone": timezone_name,
+                        "goal_distance": goal_distance.value,
+                        "race_date": race_date_value.isoformat(),
+                        "target_time_seconds": target_seconds,
+                        "days_per_week": days_per_week,
+                        "benchmark_distance": benchmark_distance.value,
+                        "benchmark_elapsed_time_seconds": benchmark_seconds,
+                        "benchmark_date": benchmark_date_value.isoformat(),
+                        "benchmark_label": benchmark_label,
+                        "research_consent": research_consent,
+                    }
+                )
+            )
+            st.session_state[SESSION_TOKEN_KEY] = registration.access_token
+            upload_onboarding_archive(
+                api_url,
+                filename=strava_archive.name,
+                content=strava_archive.getvalue(),
+            )
+        except (DashboardApiError, ValidationError, ValueError) as error:
+            st.error(str(error))
+            if SESSION_TOKEN_KEY in st.session_state:
+                st.info("Your account is saved. Reload this page to retry the Strava ZIP.")
+            return
+
+        st.success("Your Strava history, analytics, and first training plan are ready.")
+        st.rerun()
+
+
+def render_pending_onboarding(api_url: str, account: CurrentAccount) -> None:
+    """Allow a pending athlete to retry the required private ZIP import."""
+
+    athlete_name = account.athlete.display_name or "Athlete"
+    st.title(f"Finish setting up {athlete_name}")
+    st.warning(
+        "Your account is saved, but coaching stays locked until a valid Strava history ZIP "
+        "creates the initial analytics and plan."
+    )
+    st.caption(f"Current onboarding status: {account.athlete.onboarding_status}")
+    archive = st.file_uploader(
+        "Strava history ZIP",
+        type=["zip"],
+        help="Retry with the original Strava account export ZIP.",
+    )
+    if st.button("Import history and create plan", type="primary", disabled=archive is None):
+        if archive is None:
+            return
+        try:
+            completed = upload_onboarding_archive(
+                api_url,
+                filename=archive.name,
+                content=archive.getvalue(),
+            )
+        except (DashboardApiError, ValidationError, ValueError) as error:
+            st.error(str(error))
+            return
+        st.success(f"Ready: {completed.canonical_runs} runs imported and the first plan created.")
+        st.rerun()
+
+    if st.button("Sign out", key="pending_sign_out"):
+        with suppress(DashboardApiError, ValueError):
+            authenticated_api_client(api_url).logout()
+        st.session_state.pop(SESSION_TOKEN_KEY, None)
+        st.rerun()
 
 
 def upload_title_from_filename(filename: str) -> str:
@@ -523,7 +722,11 @@ def render_performance(performance: PerformanceOverview, api_url: str) -> None:
                 ),
                 "Readiness pace": format_pace(estimate.race_readiness_pace_seconds_per_km),
                 "Preparation": f"{estimate.preparation_score:.0%}",
-                "Current PB": format_duration(estimate.current_pb_seconds),
+                "Best available evidence": (
+                    format_duration(estimate.current_pb_seconds)
+                    if estimate.current_pb_seconds is not None
+                    else "Unavailable"
+                ),
                 "Confidence": estimate.confidence.title(),
             }
             for estimate in fitness.estimates
@@ -543,6 +746,10 @@ def render_performance(performance: PerformanceOverview, api_url: str) -> None:
     st.caption(
         "OpenAI's role is to explain a validated model's evidence, uncertainty, and practical "
         "meaning. Numeric race times remain the output of versioned, tested code."
+    )
+    st.caption(
+        "Verified PB cards remain athlete-confirmed. Best available evidence may be a faster "
+        "provisional effort derived from imported Strava trackpoints."
     )
     st.info(" ".join(performance.limitations))
     with st.expander("View performance calculation provenance"):
@@ -989,6 +1196,18 @@ def main() -> None:
     api_url = os.getenv("RUNCOACH_API_URL", DEFAULT_API_URL)
     if SESSION_TOKEN_KEY not in st.session_state:
         render_login(api_url)
+        return
+
+    try:
+        onboarding_account = load_onboarding_account(api_url)
+    except (DashboardApiError, ValidationError, ValueError):
+        st.session_state.pop(SESSION_TOKEN_KEY, None)
+        st.error("Your session expired. Sign in again.")
+        render_login(api_url)
+        return
+
+    if onboarding_account.athlete.onboarding_status != "ready":
+        render_pending_onboarding(api_url, onboarding_account)
         return
 
     try:

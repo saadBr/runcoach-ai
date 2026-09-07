@@ -178,7 +178,7 @@ ML must be compared with all applicable baselines.
 
 ### Experimental training-context checkpoint
 
-`training_context_fitness_v2` is exposed separately from the candidate supervised model. It
+`training_context_fitness_v3` is exposed separately from the candidate supervised model. It
 uses the newest verified effort, the context of its containing session, the athlete's own PB
 curve, and changes in target-specific training support. It reports flat-course potential and
 race readiness separately, with preparation scores, ranges, confidence, and 28-, 84-, 168-,

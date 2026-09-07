@@ -413,7 +413,7 @@ class StubAnalyticsHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         request_url = urlsplit(self.path)
 
-        if request_url.path == "/api/v1/auth/me":
+        if request_url.path in {"/api/v1/auth/me", "/api/v1/auth/onboarding"}:
             if not self._authorized():
                 return
             self._respond(CURRENT_ACCOUNT_PAYLOAD)
@@ -531,8 +531,12 @@ def test_dashboard_requires_login_before_loading_private_data(
     assert dashboard_api is None
     assert not app.exception
     assert app.title[0].value == "RunCoach AI"
-    assert [field.label for field in app.text_input] == ["Email", "Password"]
+    text_labels = [field.label for field in app.text_input]
+    assert {"Email", "Password", "Athlete name", "Account email"} <= set(text_labels)
     assert "Sign in" in [button.label for button in app.button]
+    assert "Create account and plan" in [button.label for button in app.button]
+    assert [tab.label for tab in app.tabs] == ["Sign in", "Create account"]
+    assert "Strava history ZIP (required)" in [upload.label for upload in app.file_uploader]
     assert not app.metric
 
 

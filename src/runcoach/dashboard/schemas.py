@@ -50,6 +50,16 @@ class CurrentAccount(DashboardSchema):
     session_expires_at: datetime
 
 
+class OnboardingResult(DashboardSchema):
+    """Completed required Strava import and first-plan result."""
+
+    status: Literal["ready"]
+    canonical_runs: int = Field(ge=0)
+    sensor_runs: int = Field(ge=0)
+    parser_findings: int = Field(ge=0)
+    plan_id: UUID
+
+
 class TrainingWindow(DashboardSchema):
     """Aggregate activity totals for a fixed date window."""
 
@@ -183,8 +193,8 @@ class FitnessEstimate(DashboardSchema):
     race_readiness_pace_seconds_per_km: float = Field(gt=0)
     preparation_score: float = Field(ge=0, le=1)
     confidence: str = Field(min_length=1)
-    current_pb_seconds: float = Field(gt=0)
-    improvement_from_pb_seconds: float = Field(ge=0)
+    current_pb_seconds: float | None = Field(default=None, gt=0)
+    improvement_from_pb_seconds: float | None = Field(default=None, ge=0)
     basis: str = Field(min_length=1)
 
 

@@ -100,6 +100,7 @@ def test_embedded_quality_effort_exposes_potential_and_readiness() -> None:
         <= estimate.race_readiness_time_seconds
         <= estimate.current_pb_seconds
         for estimate in assessment.estimates
+        if estimate.current_pb_seconds is not None
     )
     assert all(
         estimate.optimistic_time_seconds
@@ -156,7 +157,13 @@ def test_race_anchor_does_not_receive_workout_reserve() -> None:
 
     assert assessment.anchor_capacity_factor == 1.0
     assert assessment.anchor_improvement_factor == 1.0
-    assert assessment.estimates[0].fitness_potential_time_seconds == 2_464.0
+    estimates = {estimate.distance: estimate for estimate in assessment.estimates}
+    assert estimates[StandardDistance.TEN_K].fitness_potential_time_seconds == 2_464.0
+    missing_five_k = estimates[StandardDistance.FIVE_K]
+    assert missing_five_k.current_pb_seconds is None
+    assert missing_five_k.improvement_from_pb_seconds is None
+    assert missing_five_k.confidence == "low"
+    assert "Riegel cross-distance baseline" in missing_five_k.basis
 
 
 @pytest.mark.parametrize(

@@ -455,13 +455,16 @@ The CSV contains private activity names and identifiers and may only be written 
 
 ## Experimental current-fitness estimate
 
-The dashboard may expose `training_context_fitness_v2` as an experimental capability and
+The dashboard may expose `training_context_fitness_v3` as an experimental capability and
 readiness estimate while the supervised training model remains under chronological
 evaluation. It is not the Riegel formula and is not presented as a validated race guarantee.
 
 The calculation:
 
-1. Selects the newest active verified PB as the current fitness anchor.
+1. Compares the active verified PB with a provisional fastest exact-distance effort derived from
+   a bounded set of relevant Strava sensor activities. It uses the faster available mark for each
+   distance, reports derived evidence with low confidence, and selects the newest resulting mark
+   as the current fitness anchor.
 2. Finds the athlete's best older verified mark at that same distance when available.
 3. Classifies the anchor activity title. When a best-effort segment is embedded inside a
    substantially longer quality session, applies a bounded four-percent workout-reserve
@@ -478,9 +481,9 @@ The calculation:
 7. Reports a distance-specific readiness range and confidence. The 28-, 84-, 168-, and
    365-day histories are returned so recent training is not interpreted in isolation.
 
-Neither output can be slower than the active verified PB. Fitness potential assumes favorable
-conditions and a full effort; readiness can be slower than potential when preparation for the
-target distance is incomplete.
+Neither output can be slower than the active verified PB or the provisional fastest observed
+effort at that distance. Fitness potential assumes favorable conditions and a full effort;
+readiness can be slower than potential when preparation for the target distance is incomplete.
 
 This estimator is useful as an immediately visible, auditable checkpoint. It does not satisfy
 the release gate for the future supervised training-feature model. Chronological evaluation,
@@ -490,23 +493,26 @@ times or invent measurements.
 
 ## Goal-based training-plan preview
 
-`goal_plan_preview_v1` turns one selected race distance, race date, optional target time, and
+`goal_plan_preview_v2` turns one selected race distance, race date, optional target time, and
 weekly running frequency into a read-only plan preview. It consumes the versioned
-`training_context_fitness_v2` result rather than recalculating performance independently.
+`training_context_fitness_v3` result rather than recalculating performance independently.
 
 The method:
 
 1. Requires between two and 52 weeks before race day.
 2. Classifies the requested target as fitness-based, achievable, challenging, or aggressive
    relative to current potential, readiness, and available preparation time.
-3. Uses trailing 28-day volume as the starting load, reduced when the selected running-day
-   count is lower than recent frequency.
-4. Starts the first week below that adjusted baseline, limits normal build steps to 3.5
-   percent, inserts a cutback every fourth week, and tapers before race week.
+3. Uses trailing 28-day volume as the starting load without silently reducing total volume when
+   the selected running-day count is lower than recent frequency.
+4. Limits normal build steps to 3.5 percent, inserts a cutback every fourth week, and tapers
+   before race week. When the horizon permits safe gradual growth, a marathon build targets at
+   least 60 km per week before taper, bounded by recent volume, available weeks, and a 105 km cap.
 5. Selects target-specific quality and long-run emphasis. Marathon long runs progress from
    32 percent of weekly volume in the base phase to 35 percent in build and 38 percent in the
    specific phase, with a 35 km ceiling. Other distances retain their target-specific shares
-   and ceilings. Easy and recovery volume absorbs the remaining weekly load.
+   and ceilings. Easy and recovery volume absorbs the remaining weekly load. Base-phase marathon
+   quality starts with aerobic strides, and allocation protects meaningful easy-run distances
+   instead of creating token filler sessions.
 6. Derives transparent pace ranges from current 5K capacity and target-distance readiness.
 
 The selected goal and generated preview can now be stored as an immutable active plan version.

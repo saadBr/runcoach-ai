@@ -1,15 +1,17 @@
 """Identity primitives and safe bootstrap for the existing local athlete."""
 
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from hashlib import scrypt, sha256
 from hmac import compare_digest
 from secrets import token_bytes, token_urlsafe
 from uuid import UUID
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from runcoach.analytics.performance import PerformanceLabel, StandardDistance
 from runcoach.db.models import (
     Athlete,
     AthleteOnboarding,
@@ -17,6 +19,7 @@ from runcoach.db.models import (
     Goal,
     ImportBatch,
     ImportFile,
+    ResearchConsent,
     TrainingPlan,
     UserAccount,
 )
@@ -34,6 +37,7 @@ MAXIMUM_PASSWORD_LENGTH = 1024
 MAXIMUM_DISPLAY_NAME_LENGTH = 120
 AUTH_SESSION_TOKEN_BYTES = 32
 AUTH_SESSION_TTL = timedelta(days=30)
+RESEARCH_CONSENT_POLICY_VERSION = "model_research_v1"
 
 
 class IdentityError(RuntimeError):
@@ -77,6 +81,34 @@ class IssuedAuthSession:
 
     access_token: str
     identity: AuthenticatedAthlete
+
+
+@dataclass(frozen=True, slots=True)
+class NewAthleteRegistration:
+    """Validated account, goal, and benchmark inputs for required onboarding."""
+
+    display_name: str
+    email: str
+    password: str
+    timezone: str
+    goal_distance: StandardDistance
+    race_date: date
+    target_time_seconds: int | None
+    days_per_week: int
+    benchmark_distance: StandardDistance
+    benchmark_elapsed_time_ms: int
+    benchmark_date: date
+    benchmark_label: PerformanceLabel
+    research_consent: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class RegisteredAthlete:
+    """Pending athlete identity and onboarding bearer created by registration."""
+
+    access_token: str
+    identity: AuthenticatedAthlete
+    goal_id: UUID
 
 
 def normalize_email(email: str) -> str:
@@ -230,12 +262,12 @@ class AuthenticationService:
                 )
                 if account is None or not verify_password(password, account.password_hash):
                     raise AuthenticationRejectedError("Invalid email or password.")
-                if account.status != "active":
+                if account.status == "disabled":
                     raise AuthenticationRejectedError("Account is unavailable.")
 
                 athlete = self._session.get(Athlete, account.athlete_id)
                 onboarding = self._session.get(AthleteOnboarding, account.athlete_id)
-                if athlete is None or onboarding is None or onboarding.status != "ready":
+                if athlete is None or onboarding is None:
                     raise AuthenticationRejectedError("Account is unavailable.")
 
                 access_token = token_urlsafe(AUTH_SESSION_TOKEN_BYTES)
@@ -272,6 +304,25 @@ class AuthenticationService:
     ) -> AuthenticatedAthlete:
         """Resolve a valid bearer token to its server-owned athlete identity."""
 
+        return self._authenticate(access_token, now=now, require_ready=True)
+
+    def authenticate_onboarding(
+        self,
+        access_token: str,
+        *,
+        now: datetime | None = None,
+    ) -> AuthenticatedAthlete:
+        """Resolve a session for a pending or ready non-disabled account."""
+
+        return self._authenticate(access_token, now=now, require_ready=False)
+
+    def _authenticate(
+        self,
+        access_token: str,
+        *,
+        now: datetime | None,
+        require_ready: bool,
+    ) -> AuthenticatedAthlete:
         if not access_token:
             raise AuthenticationRejectedError("Authentication is required.")
         current_time = now or datetime.now(UTC)
@@ -288,11 +339,24 @@ class AuthenticationService:
                     raise AuthenticationRejectedError("Authentication is required.")
 
                 account = self._session.get(UserAccount, auth_session.user_account_id)
-                if account is None or account.status != "active":
-                    raise AuthenticationRejectedError("Authentication is required.")
-                athlete = self._session.get(Athlete, account.athlete_id)
-                onboarding = self._session.get(AthleteOnboarding, account.athlete_id)
-                if athlete is None or onboarding is None or onboarding.status != "ready":
+                athlete = (
+                    self._session.get(Athlete, account.athlete_id) if account is not None else None
+                )
+                onboarding = (
+                    self._session.get(AthleteOnboarding, account.athlete_id)
+                    if account is not None
+                    else None
+                )
+                if (
+                    account is None
+                    or account.status == "disabled"
+                    or athlete is None
+                    or onboarding is None
+                    or (
+                        require_ready
+                        and (account.status != "active" or onboarding.status != "ready")
+                    )
+                ):
                     raise AuthenticationRejectedError("Authentication is required.")
 
                 auth_session.last_seen_at = current_time
@@ -340,6 +404,119 @@ class AuthenticationService:
             onboarding_status=onboarding.status,
             expires_at=auth_session.expires_at,
         )
+
+
+class NewAthleteRegistrationService:
+    """Create a pending athlete account without processing private history inline."""
+
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def register(
+        self,
+        registration: NewAthleteRegistration,
+        *,
+        now: datetime | None = None,
+        today: date | None = None,
+    ) -> RegisteredAthlete:
+        """Persist identity, goal, benchmark, consent, and an onboarding session."""
+
+        current_time = now or datetime.now(UTC)
+        current_date = today or current_time.date()
+        email = normalize_email(registration.email)
+        display_name = normalize_display_name(registration.display_name)
+        validate_password(registration.password)
+        timezone_name = registration.timezone.strip()
+        try:
+            ZoneInfo(timezone_name)
+        except ZoneInfoNotFoundError as error:
+            raise ValueError("Timezone must be a valid IANA timezone.") from error
+        if registration.race_date <= current_date:
+            raise ValueError("Race date must be in the future.")
+        if registration.benchmark_date > current_date:
+            raise ValueError("Benchmark date cannot be in the future.")
+        if registration.target_time_seconds is not None and registration.target_time_seconds <= 0:
+            raise ValueError("Target time must be positive when provided.")
+        if not 3 <= registration.days_per_week <= 7:
+            raise ValueError("Training days per week must be between three and seven.")
+        if registration.benchmark_elapsed_time_ms <= 0:
+            raise ValueError("Benchmark time must be positive.")
+
+        try:
+            with self._session.begin():
+                if (
+                    self._session.scalar(
+                        select(UserAccount.id).where(UserAccount.email_normalized == email)
+                    )
+                    is not None
+                ):
+                    raise IdentityConflictError("An account already uses that email address.")
+
+                athlete = Athlete(display_name=display_name, timezone=timezone_name)
+                self._session.add(athlete)
+                self._session.flush()
+
+                account = UserAccount(
+                    athlete_id=athlete.id,
+                    email_normalized=email,
+                    password_hash=hash_password(registration.password),
+                    status="pending_onboarding",
+                )
+                goal = Goal(
+                    athlete_id=athlete.id,
+                    race_type=registration.goal_distance.value,
+                    race_date=registration.race_date,
+                    target_time_seconds=registration.target_time_seconds,
+                    days_per_week=registration.days_per_week,
+                    status="active",
+                    priority="primary",
+                )
+                self._session.add_all((account, goal))
+                self._session.flush()
+
+                onboarding = AthleteOnboarding(
+                    athlete_id=athlete.id,
+                    status="awaiting_strava_archive",
+                    goal_id=goal.id,
+                    benchmark_distance=registration.benchmark_distance.value,
+                    benchmark_elapsed_time_ms=registration.benchmark_elapsed_time_ms,
+                    benchmark_date=registration.benchmark_date,
+                    benchmark_label=registration.benchmark_label.value,
+                )
+                self._session.add(onboarding)
+                if registration.research_consent:
+                    self._session.add(
+                        ResearchConsent(
+                            athlete_id=athlete.id,
+                            decision="granted",
+                            policy_version=RESEARCH_CONSENT_POLICY_VERSION,
+                        )
+                    )
+
+                access_token = token_urlsafe(AUTH_SESSION_TOKEN_BYTES)
+                auth_session = AuthSession(
+                    user_account_id=account.id,
+                    token_hash=hash_session_token(access_token),
+                    created_at=current_time,
+                    expires_at=current_time + AUTH_SESSION_TTL,
+                    last_seen_at=current_time,
+                )
+                self._session.add(auth_session)
+                self._session.flush()
+                return RegisteredAthlete(
+                    access_token=access_token,
+                    identity=AuthenticationService._identity(
+                        auth_session=auth_session,
+                        account=account,
+                        athlete=athlete,
+                        onboarding=onboarding,
+                    ),
+                    goal_id=goal.id,
+                )
+        except (IdentityConflictError, ValueError):
+            raise
+        except Exception as error:
+            raise IdentityError("Registration failed safely.") from error
 
 
 class ExistingAthleteAccountService:

@@ -3,6 +3,7 @@
 import json
 from datetime import date
 from email.message import Message
+from io import BytesIO
 from types import TracebackType
 from typing import Never, Self, cast
 from urllib.error import HTTPError, URLError
@@ -97,6 +98,55 @@ def test_logout_requires_a_nonempty_access_token() -> None:
         RunCoachApiClient("http://localhost:8000").logout()
     with pytest.raises(ValueError, match="cannot be empty"):
         RunCoachApiClient("http://localhost:8000", access_token=" ")
+
+
+def test_registration_and_required_archive_use_separate_safe_requests(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: list[tuple[str, str, str | None, bytes | None, float]] = []
+    responses = iter((b'{"access_token":"pending-token"}', b'{"status":"ready"}'))
+
+    def fake_urlopen(request: Request, timeout: float) -> FakeResponse:
+        captured.append(
+            (
+                request.full_url,
+                request.get_method(),
+                request.get_header("Authorization"),
+                cast(bytes | None, request.data),
+                timeout,
+            )
+        )
+        return FakeResponse(next(responses))
+
+    monkeypatch.setattr(api_client, "urlopen", fake_urlopen)
+    registration = {"email": "new@example.com", "password": "private password"}
+    anonymous = RunCoachApiClient("http://localhost:8000")
+    registered = anonymous.register(registration)
+    pending = RunCoachApiClient(
+        "http://localhost:8000",
+        timeout_seconds=5,
+        access_token="pending-token",
+    )
+    completed = pending.upload_strava_archive(
+        filename="export.zip",
+        content=b"private zip bytes",
+    )
+
+    assert registered["access_token"] == "pending-token"
+    assert completed["status"] == "ready"
+    assert captured[0][:3] == (
+        "http://localhost:8000/api/v1/auth/register",
+        "POST",
+        None,
+    )
+    assert json.loads((captured[0][3] or b"").decode()) == registration
+    assert captured[1][:3] == (
+        "http://localhost:8000/api/v1/onboarding/strava-archive",
+        "POST",
+        "Bearer pending-token",
+    )
+    assert captured[1][3] == b"private zip bytes"
+    assert captured[1][4] == 300
 
 
 def test_overview_uses_normalized_api_url(
@@ -467,6 +517,38 @@ def test_client_translates_http_errors(
     monkeypatch.setattr(api_client, "urlopen", fake_urlopen)
 
     with pytest.raises(DashboardApiError, match="HTTP 503"):
+        RunCoachApiClient("http://localhost:8000").get_overview()
+
+
+@pytest.mark.parametrize(
+    ("body", "expected_message"),
+    (
+        (b'{"detail":"Upload the original Strava export as a ZIP file."}', "original"),
+        (
+            b'{"detail":{"code":"ARCHIVE_EXPANSION_TOO_LARGE",'
+            b'"message":"The expanded Strava archive is too large."}}',
+            "expanded Strava archive.*ARCHIVE_EXPANSION_TOO_LARGE",
+        ),
+    ),
+)
+def test_client_surfaces_sanitized_api_error_detail(
+    monkeypatch: pytest.MonkeyPatch,
+    body: bytes,
+    expected_message: str,
+) -> None:
+    def fake_urlopen(request: Request, timeout: float) -> Never:
+        del timeout
+        raise HTTPError(
+            request.full_url,
+            422,
+            "Unprocessable Content",
+            hdrs=Message(),
+            fp=BytesIO(body),
+        )
+
+    monkeypatch.setattr(api_client, "urlopen", fake_urlopen)
+
+    with pytest.raises(DashboardApiError, match=expected_message):
         RunCoachApiClient("http://localhost:8000").get_overview()
 
 

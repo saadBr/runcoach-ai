@@ -129,12 +129,17 @@ def test_performance_returns_verified_records_and_model_readiness(
     assert body["prediction_method"] == "training_context_fitness_v2"
     assert body["verified_labels"] == 1
     assert body["current_fitness"]["anchor"]["distance"] == "10k"
-    assert body["current_fitness"]["estimates"][0]["fitness_potential_time_seconds"] == 2464.0
-    assert body["current_fitness"]["estimates"][0]["preparation_score"] == 1.0
+    estimates = {
+        estimate["distance"]: estimate for estimate in body["current_fitness"]["estimates"]
+    }
+    assert estimates["10k"]["fitness_potential_time_seconds"] == 2464.0
+    assert estimates["10k"]["preparation_score"] == 1.0
+    assert estimates["5k"]["current_pb_seconds"] is None
+    assert estimates["5k"]["confidence"] == "low"
     assert body["current_fitness"]["training"]["runs_168d"] == 80
     assert body["current_fitness"]["training"]["runs_365d"] == 100
     assert body["interpretation_role"] == "openai_explains_validated_outputs_only"
-    assert len(body["limitations"]) == 4
+    assert len(body["limitations"]) == 5
 
 
 def test_performance_query_error_is_returned_as_not_found(

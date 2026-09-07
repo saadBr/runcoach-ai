@@ -3,6 +3,7 @@
 import csv
 import hashlib
 import re
+import unicodedata
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -32,6 +33,16 @@ _STRAVA_DATE_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+_STRAVA_DAY_FIRST_DATE_PATTERN = re.compile(
+    r"^(?P<day>\d{1,2}) "
+    r"(?P<month>[^\s]+) "
+    r"(?P<year>\d{4}), "
+    r"(?P<hour>\d{1,2}):"
+    r"(?P<minute>\d{2}):"
+    r"(?P<second>\d{2})$",
+    re.IGNORECASE,
+)
+
 _MONTHS = {
     "jan": 1,
     "feb": 2,
@@ -45,6 +56,15 @@ _MONTHS = {
     "oct": 10,
     "nov": 11,
     "dec": 12,
+    "janv": 1,
+    "fevr": 2,
+    "mars": 3,
+    "avr": 4,
+    "mai": 5,
+    "juin": 6,
+    "juil": 7,
+    "aout": 8,
+    "sept": 9,
 }
 
 _ACTIVITY_KIND_BY_STRAVA_TYPE = {
@@ -52,6 +72,10 @@ _ACTIVITY_KIND_BY_STRAVA_TYPE = {
     "trail run": ActivityKind.TRAIL_RUNNING,
     "treadmill run": ActivityKind.TREADMILL_RUNNING,
     "virtual run": ActivityKind.TREADMILL_RUNNING,
+    "course a pied": ActivityKind.RUNNING,
+    "course sur sentier": ActivityKind.TRAIL_RUNNING,
+    "course sur tapis": ActivityKind.TREADMILL_RUNNING,
+    "course virtuelle": ActivityKind.TREADMILL_RUNNING,
 }
 
 
@@ -73,8 +97,14 @@ def _column_index(
     header: list[str],
     name: str,
     occurrence: int = 1,
+    aliases: tuple[str, ...] = (),
 ) -> int:
-    matches = [index for index, column_name in enumerate(header) if column_name == name]
+    accepted_names = {_normalize_source_label(value) for value in (name, *aliases)}
+    matches = [
+        index
+        for index, column_name in enumerate(header)
+        if _normalize_source_label(column_name) in accepted_names
+    ]
 
     if len(matches) < occurrence:
         raise ValueError(f"required column occurrence is missing: {name}")
@@ -84,17 +114,34 @@ def _column_index(
 
 def _resolve_columns(header: list[str]) -> _Columns:
     return _Columns(
-        activity_id=_column_index(header, "Activity ID"),
-        activity_date=_column_index(header, "Activity Date"),
-        activity_name=_column_index(header, "Activity Name"),
-        activity_type=_column_index(header, "Activity Type"),
-        filename=_column_index(header, "Filename"),
+        activity_id=_column_index(header, "Activity ID", aliases=("ID de l'activite",)),
+        activity_date=_column_index(
+            header,
+            "Activity Date",
+            aliases=("Date de l'activite",),
+        ),
+        activity_name=_column_index(
+            header,
+            "Activity Name",
+            aliases=("Nom de l'activite",),
+        ),
+        activity_type=_column_index(
+            header,
+            "Activity Type",
+            aliases=("Type d'activite",),
+        ),
+        filename=_column_index(header, "Filename", aliases=("Nom du fichier",)),
         elapsed_time=_column_index(
             header,
             "Elapsed Time",
             occurrence=2,
+            aliases=("Temps ecoule",),
         ),
-        moving_time=_column_index(header, "Moving Time"),
+        moving_time=_column_index(
+            header,
+            "Moving Time",
+            aliases=("Duree de deplacement",),
+        ),
         distance=_column_index(
             header,
             "Distance",
@@ -103,12 +150,23 @@ def _resolve_columns(header: list[str]) -> _Columns:
         elevation_gain=_column_index(
             header,
             "Elevation Gain",
+            aliases=("Denivele positif",),
         ),
         elevation_loss=_column_index(
             header,
             "Elevation Loss",
+            aliases=("Denivele negatif",),
         ),
     )
+
+
+def _normalize_source_label(value: str) -> str:
+    normalized = value.replace("\N{RIGHT SINGLE QUOTATION MARK}", "'")
+    decomposed = unicodedata.normalize("NFKD", normalized)
+    without_accents = "".join(
+        character for character in decomposed if not unicodedata.combining(character)
+    )
+    return re.sub(r"\s+", " ", without_accents).strip().casefold()
 
 
 def _parse_timestamp(value: str) -> datetime:
@@ -126,17 +184,22 @@ def _parse_timestamp(value: str) -> datetime:
         return parsed.astimezone(UTC)
 
     match = _STRAVA_DATE_PATTERN.match(normalized)
+    day_first = False
+    if match is None:
+        match = _STRAVA_DAY_FIRST_DATE_PATTERN.match(normalized)
+        day_first = match is not None
 
     if match is None:
         raise ValueError("unsupported Strava activity timestamp")
 
-    month = _MONTHS.get(match.group("month").lower())
+    month_name = _normalize_source_label(match.group("month")).removesuffix(".")
+    month = _MONTHS.get(month_name)
 
     if month is None:
         raise ValueError("unsupported Strava activity month")
 
     hour = int(match.group("hour"))
-    period = match.group("period").upper()
+    period = "" if day_first else match.group("period").upper()
 
     if period == "AM" and hour == 12:
         hour = 0
@@ -179,7 +242,7 @@ def _content_sha256(path: Path) -> str:
 
 def _activity_kind(provider_type: str) -> ActivityKind:
     return _ACTIVITY_KIND_BY_STRAVA_TYPE.get(
-        provider_type.strip().lower(),
+        _normalize_source_label(provider_type),
         ActivityKind.OTHER,
     )
 

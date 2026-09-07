@@ -3,15 +3,15 @@
 ## Status
 
 - Project: RunCoach AI
-- Document state: Implemented through authenticated athlete sessions
+- Document state: Implemented through required Strava-history onboarding
 - Last updated: 2026-09-07
 - Database: PostgreSQL 17
 - ORM and migrations: SQLAlchemy 2 and Alembic
 
 The logical model is implemented incrementally through Alembic migrations. Authentication and
-onboarding tables establish the multi-athlete boundary. Login, revocation, and session-derived
-athlete ownership are operational; new-athlete Strava archive orchestration remains a separate
-checkpoint.
+onboarding tables establish the multi-athlete boundary. Login, revocation, session-derived
+athlete ownership, safe Strava ZIP ingestion, initial analytics, and first-plan creation are
+operational.
 
 ## Modeling principles
 
@@ -135,6 +135,10 @@ One row per athlete records progress through mandatory Strava-history onboarding
 | `strava_import_batch_id` | UUID | Nullable foreign key to the accepted import batch |
 | `goal_id` | UUID | Nullable foreign key to the onboarding race goal |
 | `training_plan_id` | UUID | Nullable foreign key to the generated plan |
+| `benchmark_distance` | Text | Required signup benchmark distance while onboarding |
+| `benchmark_elapsed_time_ms` | Bigint | Positive declared benchmark time |
+| `benchmark_date` | Date | Date of exactly one eligible imported Strava run |
+| `benchmark_label` | Text | Verified race, time trial, or maximum effort |
 | `failure_code` | Text | Nullable sanitized machine-readable failure |
 | `completed_at` | Timestamptz | Nullable |
 | `created_at` | Timestamptz | Required |

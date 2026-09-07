@@ -63,6 +63,7 @@ services:
         "--server.port=8501",
         "--server.headless=true",
         "--browser.gatherUsageStats=false",
+        "--server.maxUploadSize=1024",
       ]
     environment:
       RUNCOACH_API_URL: http://api:8000

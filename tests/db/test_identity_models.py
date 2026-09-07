@@ -73,7 +73,16 @@ def test_onboarding_requires_strava_import_goal_and_plan_before_ready() -> None:
         "athlete_onboarding_status",
         "athlete_onboarding_ready",
         "athlete_onboarding_failure",
+        "athlete_onboarding_benchmark_distance",
+        "athlete_onboarding_benchmark_time",
+        "athlete_onboarding_benchmark_label",
     } <= _check_names(table)
+    assert {
+        "benchmark_distance",
+        "benchmark_elapsed_time_ms",
+        "benchmark_date",
+        "benchmark_label",
+    } <= set(table.c.keys())
 
 
 def test_onboarding_references_existing_import_and_plan_evidence() -> None:

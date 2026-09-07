@@ -9,6 +9,7 @@ from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
+from runcoach.analytics.performance import PerformanceLabel, StandardDistance
 from runcoach.db.base import Base
 from runcoach.db.identity import (
     AuthenticationRejectedError,
@@ -16,6 +17,8 @@ from runcoach.db.identity import (
     ExistingAthleteAccountService,
     IdentityConflictError,
     IdentityError,
+    NewAthleteRegistration,
+    NewAthleteRegistrationService,
     hash_password,
     hash_session_token,
     normalize_display_name,
@@ -347,3 +350,89 @@ def test_login_and_expired_sessions_fail_without_leaking_account_state(
             issued.access_token,
             now=login_time + timedelta(days=31),
         )
+
+
+def _new_registration() -> NewAthleteRegistration:
+    return NewAthleteRegistration(
+        display_name="New Athlete",
+        email="new-athlete@example.com",
+        password="new athlete private password",
+        timezone="Africa/Casablanca",
+        goal_distance=StandardDistance.MARATHON,
+        race_date=date(2027, 1, 31),
+        target_time_seconds=12_600,
+        days_per_week=5,
+        benchmark_distance=StandardDistance.FIVE_K,
+        benchmark_elapsed_time_ms=1_200_000,
+        benchmark_date=date(2026, 9, 1),
+        benchmark_label=PerformanceLabel.VERIFIED_MAX_EFFORT,
+        research_consent=True,
+    )
+
+
+def test_registration_creates_isolated_pending_athlete_goal_and_session(
+    db_session: Session,
+) -> None:
+    registered = NewAthleteRegistrationService(db_session).register(
+        _new_registration(),
+        now=datetime(2026, 9, 7, 12, tzinfo=UTC),
+        today=date(2026, 9, 7),
+    )
+
+    new_athlete = db_session.get(Athlete, registered.identity.athlete_id)
+    account = db_session.get(UserAccount, registered.identity.account_id)
+    onboarding = db_session.get(AthleteOnboarding, registered.identity.athlete_id)
+    goal = db_session.get(Goal, registered.goal_id)
+
+    assert new_athlete is not None
+    assert new_athlete.id != ATHLETE_ID
+    assert db_session.get(Athlete, ATHLETE_ID) is not None
+    assert db_session.get(Activity, ACTIVITY_ID) is not None
+    assert account is not None and account.status == "pending_onboarding"
+    assert onboarding is not None
+    assert onboarding.status == "awaiting_strava_archive"
+    assert onboarding.benchmark_distance == "5k"
+    assert onboarding.benchmark_elapsed_time_ms == 1_200_000
+    assert onboarding.benchmark_date == date(2026, 9, 1)
+    assert onboarding.benchmark_label == "verified_max_effort"
+    assert goal is not None and goal.race_type == "marathon"
+    assert db_session.scalar(select(func.count()).select_from(ResearchConsent)) == 1
+
+    db_session.rollback()
+    pending_identity = AuthenticationService(db_session).authenticate_onboarding(
+        registered.access_token,
+        now=datetime(2026, 9, 7, 13, tzinfo=UTC),
+    )
+    assert pending_identity.onboarding_status == "awaiting_strava_archive"
+    resumed = AuthenticationService(db_session).login(
+        email="new-athlete@example.com",
+        password="new athlete private password",
+        now=datetime(2026, 9, 7, 13, tzinfo=UTC),
+    )
+    assert resumed.identity.onboarding_status == "awaiting_strava_archive"
+    with pytest.raises(AuthenticationRejectedError, match="required"):
+        AuthenticationService(db_session).authenticate(
+            registered.access_token,
+            now=datetime(2026, 9, 7, 13, tzinfo=UTC),
+        )
+
+
+def test_registration_rejects_duplicate_email_without_partial_second_account(
+    db_session: Session,
+) -> None:
+    service = NewAthleteRegistrationService(db_session)
+    service.register(
+        _new_registration(),
+        now=datetime(2026, 9, 7, 12, tzinfo=UTC),
+        today=date(2026, 9, 7),
+    )
+
+    with pytest.raises(IdentityConflictError, match="already uses"):
+        service.register(
+            _new_registration(),
+            now=datetime(2026, 9, 7, 13, tzinfo=UTC),
+            today=date(2026, 9, 7),
+        )
+
+    assert db_session.scalar(select(func.count()).select_from(UserAccount)) == 1
+    assert db_session.scalar(select(func.count()).select_from(Athlete)) == 2

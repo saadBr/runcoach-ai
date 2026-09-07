@@ -7,6 +7,7 @@ from math import isfinite
 from typing import Final, Literal
 
 from runcoach.analytics.performance import (
+    DEFAULT_RIEGEL_EXPONENT,
     PerformanceEffortType,
     PerformanceLabel,
     StandardDistance,
@@ -14,7 +15,7 @@ from runcoach.analytics.performance import (
 )
 from runcoach.analytics.session_classification import SessionKind
 
-CURRENT_FITNESS_ALGORITHM_VERSION: Final = "training_context_fitness_v2"
+CURRENT_FITNESS_ALGORITHM_VERSION: Final = "training_context_fitness_v3"
 
 type EstimateConfidence = Literal["low", "medium", "high"]
 
@@ -30,6 +31,7 @@ class FitnessMark:
     effort_type: PerformanceEffortType = PerformanceEffortType.WHOLE_ACTIVITY
     activity_distance_km: float | None = None
     session_kind: SessionKind = SessionKind.UNCLASSIFIED
+    is_verified: bool = True
 
     def __post_init__(self) -> None:
         if not isfinite(self.elapsed_time_seconds) or self.elapsed_time_seconds <= 0:
@@ -89,8 +91,8 @@ class CurrentFitnessEstimate:
     race_readiness_pace_seconds_per_km: float
     preparation_score: float
     confidence: EstimateConfidence
-    current_pb_seconds: float
-    improvement_from_pb_seconds: float
+    current_pb_seconds: float | None
+    improvement_from_pb_seconds: float | None
     basis: str
 
 
@@ -207,13 +209,17 @@ def _preparation_score(distance: StandardDistance, training: TrainingProfile) ->
 
 def _confidence(
     *,
-    mark: FitnessMark,
+    mark: FitnessMark | None,
     anchor: FitnessMark,
     as_of_date: date,
     training: TrainingProfile,
     preparation_score: float,
     has_prior_anchor: bool,
 ) -> EstimateConfidence:
+    if mark is not None and not mark.is_verified:
+        return "low"
+    if mark is None:
+        return "low"
     age_days = (as_of_date - mark.achieved_on).days
     if (
         mark.distance is anchor.distance
@@ -274,35 +280,54 @@ def estimate_current_fitness(
     for distance in StandardDistance:
         mark = marks_by_distance.get(distance)
         if mark is None:
-            continue
-
-        potential = (
-            anchor_capacity_seconds
-            if distance is anchor.distance
-            else mark.elapsed_time_seconds * anchor_improvement
-        )
+            anchor_distance_m = standard_distance_meters(anchor.distance)
+            target_distance_m = standard_distance_meters(distance)
+            potential = (
+                anchor_capacity_seconds
+                * (target_distance_m / anchor_distance_m) ** DEFAULT_RIEGEL_EXPONENT
+            )
+        else:
+            potential = (
+                anchor_capacity_seconds
+                if distance is anchor.distance
+                else mark.elapsed_time_seconds * anchor_improvement
+            )
         endurance_adjustment = _endurance_adjustment(
             distance=distance,
             current=training,
             reference=references.get(distance),
         )
         potential *= endurance_adjustment
-        potential = min(potential, mark.elapsed_time_seconds)
+        if mark is not None:
+            potential = min(potential, mark.elapsed_time_seconds)
 
         preparation_score = _preparation_score(distance, training)
         readiness_factor = 1 + _MAX_READINESS_PENALTY[distance] * (1 - preparation_score)
         readiness = potential * readiness_factor
-        readiness = min(readiness, mark.elapsed_time_seconds)
+        if mark is not None:
+            readiness = min(readiness, mark.elapsed_time_seconds)
 
         width = _RANGE_WIDTH[distance] * (1 + 0.5 * (1 - preparation_score))
         optimistic = readiness * (1 - width)
         conservative = readiness * (1 + width)
         distance_km = standard_distance_meters(distance) / 1_000
         reference = references.get(distance)
-        basis = (
-            "Current capability is anchored to the newest verified effort and the athlete's "
-            "personal PB curve."
-        )
+        if mark is None:
+            basis = (
+                "No verified PB exists at this distance. Current capability uses a Riegel "
+                "cross-distance baseline from the verified anchor."
+            )
+        elif mark.is_verified:
+            basis = (
+                "Current capability is anchored to the newest verified effort and the "
+                "athlete's personal PB curve."
+            )
+        else:
+            basis = (
+                "Current capability is bounded by the fastest standard-distance effort "
+                "observed in the imported Strava activity evidence; athlete verification "
+                "is pending."
+            )
         if capacity_factor < 1:
             basis += " The anchor includes a bounded reserve for an embedded quality effort."
         if reference is not None and endurance_adjustment != 1:
@@ -327,8 +352,10 @@ def estimate_current_fitness(
                     preparation_score=preparation_score,
                     has_prior_anchor=prior_anchor is not None,
                 ),
-                current_pb_seconds=mark.elapsed_time_seconds,
-                improvement_from_pb_seconds=round(mark.elapsed_time_seconds - readiness, 3),
+                current_pb_seconds=mark.elapsed_time_seconds if mark is not None else None,
+                improvement_from_pb_seconds=(
+                    round(mark.elapsed_time_seconds - readiness, 3) if mark is not None else None
+                ),
                 basis=basis,
             )
         )
@@ -347,6 +374,8 @@ def estimate_current_fitness(
             "Fitness potential assumes a flat course, favorable conditions, and a full effort.",
             "Race readiness is a deterministic training-evidence adjustment, not a guarantee.",
             "The model is personalized to one athlete but is not yet chronologically validated.",
+            "Automatically derived Strava best efforts remain provisional until the athlete "
+            "confirms them.",
             "Weather, taper, illness, sleep, terrain, and race execution are not modeled yet.",
         ),
     )

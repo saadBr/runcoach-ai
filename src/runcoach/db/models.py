@@ -168,6 +168,20 @@ class AthleteOnboarding(TimestampMixin, Base):
             "status <> 'failed' OR failure_code IS NOT NULL",
             name="athlete_onboarding_failure",
         ),
+        CheckConstraint(
+            "benchmark_distance IS NULL OR benchmark_distance IN "
+            "('5k', '10k', 'half_marathon', 'marathon')",
+            name="athlete_onboarding_benchmark_distance",
+        ),
+        CheckConstraint(
+            "benchmark_elapsed_time_ms IS NULL OR benchmark_elapsed_time_ms > 0",
+            name="athlete_onboarding_benchmark_time",
+        ),
+        CheckConstraint(
+            "benchmark_label IS NULL OR benchmark_label IN "
+            "('verified_race', 'verified_time_trial', 'verified_max_effort')",
+            name="athlete_onboarding_benchmark_label",
+        ),
         Index("ix_athlete_onboarding_status", "status"),
     )
 
@@ -196,6 +210,10 @@ class AthleteOnboarding(TimestampMixin, Base):
         ForeignKey("training_plans.id", ondelete="SET NULL"),
         nullable=True,
     )
+    benchmark_distance: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    benchmark_elapsed_time_ms: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    benchmark_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    benchmark_label: Mapped[str | None] = mapped_column(String(32), nullable=True)
     failure_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),

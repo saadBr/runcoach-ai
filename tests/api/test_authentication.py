@@ -167,7 +167,7 @@ def test_logout_revokes_the_current_session(
         def __init__(self, session: object) -> None:
             del session
 
-        def authenticate(self, access_token: str) -> AuthenticatedAthlete:
+        def authenticate_onboarding(self, access_token: str) -> AuthenticatedAthlete:
             assert access_token == ACCESS_TOKEN
             return _identity()
 

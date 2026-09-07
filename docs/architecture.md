@@ -94,8 +94,8 @@ The verified implementation currently provides:
 - A provider-neutral conversational coaching boundary over privacy-minimized deterministic
   evidence, with cited structured responses and deterministic fallback behavior.
 - An optional stateless OpenAI Responses API adapter using strict structured output.
-- A persistence foundation for one-to-one athlete accounts, revocable opaque sessions, mandatory
-  Strava-history onboarding, and append-only model-research consent.
+- New-athlete registration with one-to-one accounts, revocable opaque sessions, mandatory bounded
+  Strava-history ZIP processing, resumable onboarding, and append-only model-research consent.
 - Database-backed login and logout, hashed opaque bearer sessions, a Streamlit credential gate,
   and session-derived athlete ownership for private analytics and coaching requests.
 - Health-checked PostgreSQL, FastAPI, and Streamlit Compose services.
@@ -106,8 +106,6 @@ The following remain planned and require their own implementation and validation
 
 - Persisted automatic rescheduling beyond the first detailed training week.
 - A machine-learning experiment selected after a label audit.
-- New-athlete signup, safe Strava ZIP processing, and the resumable onboarding interface over the
-  authenticated persistence foundation.
 - Controlled LangGraph orchestration over the implemented coaching-run audit records.
 - Sanitized cloud deployment.
 

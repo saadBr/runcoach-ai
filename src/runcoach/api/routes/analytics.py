@@ -210,8 +210,8 @@ class FitnessEstimateResponse(BaseModel):
     race_readiness_pace_seconds_per_km: float
     preparation_score: float
     confidence: str
-    current_pb_seconds: float
-    improvement_from_pb_seconds: float
+    current_pb_seconds: float | None
+    improvement_from_pb_seconds: float | None
     basis: str
 
 

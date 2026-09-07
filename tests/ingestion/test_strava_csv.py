@@ -27,6 +27,21 @@ HEADER = [
     "Elevation Loss",
 ]
 
+FRENCH_HEADER = [
+    "ID de l'activite",
+    "Date de l'activite",
+    "Nom de l'activite",
+    "Type d'activite",
+    "Temps ecoule",
+    "Distance",
+    "Nom du fichier",
+    "Temps ecoule",
+    "Duree de deplacement",
+    "Distance",
+    "Denivele positif",
+    "Denivele negatif",
+]
+
 
 def _write_csv(
     path: Path,
@@ -115,6 +130,41 @@ def test_non_running_row_is_staged_as_other(
     assert result.findings == ()
     assert result.activities[0].activity_kind is ActivityKind.OTHER
     assert result.activities[0].source.referenced_file_name is None
+
+
+def test_french_localized_export_is_normalized(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "activities.csv"
+    _write_csv(
+        path,
+        FRENCH_HEADER,
+        [
+            [
+                "1003",
+                "7 sept. 2026, 05:05:02",
+                "Synthetic localized run",
+                "Course a pied",
+                "display elapsed",
+                "display distance",
+                "activities/localized.fit.gz",
+                "4630.0",
+                "4627.0",
+                "12011.9",
+                "67.0",
+                "67.0",
+            ]
+        ],
+    )
+
+    result = parse_strava_activities_csv(path, ATHLETE_ID)
+
+    assert result.findings == ()
+    activity = result.activities[0]
+    assert activity.activity_kind is ActivityKind.RUNNING
+    assert activity.start_time_utc.isoformat() == "2026-09-07T05:05:02+00:00"
+    assert activity.distance_m == 12_011.9
+    assert activity.elevation_gain_m == 67
 
 
 def test_malformed_row_is_reported_without_stopping_import(

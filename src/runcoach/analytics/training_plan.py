@@ -12,7 +12,7 @@ from runcoach.analytics.current_fitness import (
 )
 from runcoach.analytics.performance import StandardDistance, standard_distance_meters
 
-TRAINING_PLAN_VERSION: Final = "goal_plan_preview_v1"
+TRAINING_PLAN_VERSION: Final = "goal_plan_preview_v2"
 MINIMUM_PLAN_DAYS: Final = 14
 MAXIMUM_PLAN_DAYS: Final = 364
 
@@ -134,6 +134,20 @@ _LONG_RUN_CAP_KM: Final[dict[StandardDistance, float]] = {
     StandardDistance.MARATHON: 35.0,
 }
 
+_MINIMUM_PEAK_WEEKLY_KM: Final[dict[StandardDistance, float]] = {
+    StandardDistance.FIVE_K: 30.0,
+    StandardDistance.TEN_K: 35.0,
+    StandardDistance.HALF_MARATHON: 45.0,
+    StandardDistance.MARATHON: 60.0,
+}
+
+_MAXIMUM_PEAK_WEEKLY_KM: Final[dict[StandardDistance, float]] = {
+    StandardDistance.FIVE_K: 65.0,
+    StandardDistance.TEN_K: 75.0,
+    StandardDistance.HALF_MARATHON: 90.0,
+    StandardDistance.MARATHON: 105.0,
+}
+
 _QUALITY_FOCUS: Final[dict[StandardDistance, str]] = {
     StandardDistance.FIVE_K: "5K speed endurance",
     StandardDistance.TEN_K: "10K pace and threshold durability",
@@ -193,6 +207,7 @@ def _weekly_distance(
     week_number: int,
     total_weeks: int,
     recent_weekly_km: float,
+    peak_weekly_km: float,
     phase: PlanPhase,
     race_distance: StandardDistance,
 ) -> float:
@@ -201,13 +216,35 @@ def _weekly_distance(
         return round(max(recent_weekly_km * 0.45, race_distance_km + 6), 1)
     if phase is PlanPhase.TAPER:
         weeks_remaining = total_weeks - week_number
-        return round(recent_weekly_km * (0.62 if weeks_remaining == 1 else 0.78), 1)
+        return round(peak_weekly_km * (0.62 if weeks_remaining == 1 else 0.78), 1)
 
     build_step = (week_number - 1) - ((week_number - 1) // 4)
-    distance_km = recent_weekly_km * 0.92 * (1.035**build_step)
+    distance_km = recent_weekly_km * (1.035**build_step)
     if week_number % 4 == 0:
         distance_km *= 0.82
-    return round(min(distance_km, recent_weekly_km * 1.15), 1)
+    return round(min(distance_km, peak_weekly_km), 1)
+
+
+def _peak_weekly_distance(
+    *,
+    recent_weekly_km: float,
+    total_weeks: int,
+    race_distance: StandardDistance,
+) -> float:
+    build_weeks = max(total_weeks - 3, 1)
+    safe_growth_ceiling = recent_weekly_km * (1.05**build_weeks)
+    desired_peak = max(
+        recent_weekly_km * 1.15,
+        _MINIMUM_PEAK_WEEKLY_KM[race_distance],
+    )
+    return round(
+        min(
+            desired_peak,
+            safe_growth_ceiling,
+            _MAXIMUM_PEAK_WEEKLY_KM[race_distance],
+        ),
+        1,
+    )
 
 
 def _long_run_distance(
@@ -238,6 +275,11 @@ def _weekly_outline(
     total_weeks: int,
     recent_weekly_km: float,
 ) -> tuple[PlannedWeek, ...]:
+    peak_weekly_km = _peak_weekly_distance(
+        recent_weekly_km=recent_weekly_km,
+        total_weeks=total_weeks,
+        race_distance=goal.distance,
+    )
     weeks: list[PlannedWeek] = []
     for week_number in range(1, total_weeks + 1):
         start_date = plan_start_date + timedelta(days=(week_number - 1) * 7)
@@ -247,6 +289,7 @@ def _weekly_outline(
             week_number=week_number,
             total_weeks=total_weeks,
             recent_weekly_km=recent_weekly_km,
+            peak_weekly_km=peak_weekly_km,
             phase=phase,
             race_distance=goal.distance,
         )
@@ -306,13 +349,38 @@ def _session_paces(
     }
 
 
-def _quality_title(distance: StandardDistance) -> str:
+def _quality_title(distance: StandardDistance, phase: PlanPhase) -> str:
+    if distance is StandardDistance.MARATHON:
+        if phase is PlanPhase.BASE:
+            return "Aerobic run with 6 x 20 second relaxed strides"
+        if phase is PlanPhase.BUILD:
+            return "2 x 3 km at controlled marathon effort"
     return {
         StandardDistance.FIVE_K: "6 x 800 m at controlled 5K effort",
         StandardDistance.TEN_K: "4 x 2 km at controlled 10K effort",
         StandardDistance.HALF_MARATHON: "3 x 3 km at threshold to half-marathon effort",
         StandardDistance.MARATHON: "3 x 4 km at controlled marathon effort",
     }[distance]
+
+
+def _quality_distance(
+    *,
+    race_distance: StandardDistance,
+    phase: PlanPhase,
+    weekly_distance_km: float,
+) -> tuple[float, float]:
+    if race_distance is StandardDistance.MARATHON and phase is PlanPhase.BASE:
+        return round(max(8.0, weekly_distance_km * 0.14), 1), 8.0
+    minimum_distance = {
+        StandardDistance.FIVE_K: 7.0,
+        StandardDistance.TEN_K: 9.0,
+        StandardDistance.HALF_MARATHON: 12.0,
+        StandardDistance.MARATHON: 15.0,
+    }[race_distance]
+    return (
+        round(max(minimum_distance, weekly_distance_km * 0.16), 1),
+        minimum_distance,
+    )
 
 
 def _first_week(
@@ -322,30 +390,53 @@ def _first_week(
     fitness: CurrentFitnessAssessment,
     target_estimate: CurrentFitnessEstimate,
 ) -> tuple[PlannedSession, ...]:
+    long_distance = week.long_run_km
+    quality_distance, minimum_quality_distance = _quality_distance(
+        race_distance=goal.distance,
+        phase=week.phase,
+        weekly_distance_km=week.target_distance_km,
+    )
+    easy_count = goal.days_per_week - 2
+    minimum_easy_distance = {
+        StandardDistance.FIVE_K: 4.0,
+        StandardDistance.TEN_K: 4.5,
+        StandardDistance.HALF_MARATHON: 5.0,
+        StandardDistance.MARATHON: 5.0,
+    }[goal.distance]
+    minimum_long_distance = {
+        StandardDistance.FIVE_K: 8.0,
+        StandardDistance.TEN_K: 10.0,
+        StandardDistance.HALF_MARATHON: 12.0,
+        StandardDistance.MARATHON: 12.0,
+    }[goal.distance]
+    required_easy_distance = easy_count * minimum_easy_distance
+    deficit = max(
+        long_distance + quality_distance + required_easy_distance - week.target_distance_km,
+        0.0,
+    )
+    quality_reduction = min(deficit, max(quality_distance - minimum_quality_distance, 0.0))
+    quality_distance = round(quality_distance - quality_reduction, 1)
+    deficit -= quality_reduction
+    long_reduction = min(deficit, max(long_distance - minimum_long_distance, 0.0))
+    long_distance = round(long_distance - long_reduction, 1)
+    remaining_distance = max(week.target_distance_km - long_distance - quality_distance, 0.0)
+    if easy_count and remaining_distance / easy_count < minimum_easy_distance:
+        easy_count = max(
+            min(int(remaining_distance / minimum_easy_distance), easy_count),
+            1,
+        )
+    easy_distance = round(remaining_distance / easy_count, 1) if easy_count else 0.0
+    effective_days_per_week = easy_count + 2
     day_slots = {
         3: (1, 3, 6),
         4: (1, 3, 5, 6),
         5: (0, 1, 3, 5, 6),
         6: (0, 1, 2, 3, 5, 6),
         7: (0, 1, 2, 3, 4, 5, 6),
-    }[goal.days_per_week]
+    }[effective_days_per_week]
     long_day = day_slots[-1]
     quality_day = day_slots[1] if len(day_slots) >= 4 else day_slots[0]
     recovery_day = day_slots[-2] if len(day_slots) >= 4 else None
-    long_distance = week.long_run_km
-    minimum_quality_distance = {
-        StandardDistance.FIVE_K: 9.0,
-        StandardDistance.TEN_K: 12.0,
-        StandardDistance.HALF_MARATHON: 15.0,
-        StandardDistance.MARATHON: 18.0,
-    }[goal.distance]
-    quality_distance = round(
-        max(minimum_quality_distance, week.target_distance_km * 0.16),
-        1,
-    )
-    remaining_distance = max(week.target_distance_km - long_distance - quality_distance, 0.0)
-    easy_count = goal.days_per_week - 2
-    easy_distance = round(remaining_distance / easy_count, 1) if easy_count else 0.0
     paces = _session_paces(fitness, target_estimate, goal.distance)
 
     sessions: list[PlannedSession] = []
@@ -367,7 +458,7 @@ def _first_week(
                 PlannedSession(
                     scheduled_date=scheduled_date,
                     kind=PlannedSessionKind.QUALITY,
-                    title=_quality_title(goal.distance),
+                    title=_quality_title(goal.distance, week.phase),
                     distance_km=quality_distance,
                     pace=paces[PlannedSessionKind.QUALITY],
                     purpose=(
@@ -421,16 +512,11 @@ def build_training_plan_preview(
     if recent_weekly_km <= 0:
         raise ValueError("Recent training volume is required to generate a plan.")
 
-    recent_weekly_runs = max(fitness.training.runs_28d / 4, 1.0)
-    planning_weekly_km = recent_weekly_km * min(
-        goal.days_per_week / recent_weekly_runs,
-        1.0,
-    )
     outline = _weekly_outline(
         goal=goal,
         plan_start_date=plan_start_date,
         total_weeks=weeks_to_race,
-        recent_weekly_km=planning_weekly_km,
+        recent_weekly_km=recent_weekly_km,
     )
     first_week = _first_week(
         goal=goal,
@@ -468,8 +554,12 @@ def build_training_plan_preview(
         weekly_outline=outline,
         rationale=(
             "The target is assessed against the current training-context fitness estimate.",
-            "Initial volume starts below the trailing 28-day weekly average.",
-            "Build weeks increase gradually, every fourth week reduces load, and race week tapers.",
+            "Initial volume preserves the trailing 28-day weekly average instead of reducing it "
+            "when sessions are consolidated into fewer days.",
+            "The base week uses fewer than the maximum available days when necessary to avoid "
+            "token filler runs.",
+            "Build weeks increase gradually toward a distance-specific peak, every fourth week "
+            "reduces load, and race week tapers.",
             "Session paces are derived from current 5K capacity and target-distance readiness.",
         ),
         guardrails=(

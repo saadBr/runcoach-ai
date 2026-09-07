@@ -1,5 +1,6 @@
 """Read-only verified-performance queries for the analytical dashboard."""
 
+from collections import defaultdict
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
@@ -15,14 +16,17 @@ from runcoach.analytics.current_fitness import (
     estimate_current_fitness,
 )
 from runcoach.analytics.performance import (
+    DEFAULT_DISTANCE_TOLERANCE_PCT,
+    DistanceSample,
     PerformanceEffortType,
     PerformanceLabel,
     StandardDistance,
     VerifiedPerformance,
+    calculate_fastest_rolling_distance_effort,
     standard_distance_meters,
 )
 from runcoach.analytics.session_classification import classify_session
-from runcoach.db.models import Activity, Athlete, PersonalBest
+from runcoach.db.models import Activity, Athlete, PersonalBest, Trackpoint
 
 DISTANCE_BY_METERS = {
     Decimal("5000.000"): StandardDistance.FIVE_K,
@@ -30,6 +34,8 @@ DISTANCE_BY_METERS = {
     Decimal("21097.500"): StandardDistance.HALF_MARATHON,
     Decimal("42195.000"): StandardDistance.MARATHON,
 }
+
+OBSERVED_EFFORT_CANDIDATES_PER_DISTANCE = 24
 
 
 class PerformanceQueryError(RuntimeError):
@@ -143,6 +149,105 @@ def _training_profile(
     )
 
 
+def _observed_best_effort_marks(
+    *,
+    session: Session,
+    activities: tuple[Activity, ...],
+) -> tuple[FitnessMark, ...]:
+    """Derive provisional best efforts from imported activity evidence."""
+
+    candidates_by_distance: dict[StandardDistance, tuple[Activity, ...]] = {}
+    for distance in StandardDistance:
+        target_m = standard_distance_meters(distance)
+        candidates = tuple(
+            sorted(
+                (
+                    activity
+                    for activity in activities
+                    if float(activity.distance_m)
+                    >= target_m * (1 - DEFAULT_DISTANCE_TOLERANCE_PCT / 100)
+                    and activity.elapsed_time_ms > 0
+                ),
+                key=lambda activity: (
+                    activity.elapsed_time_ms / max(float(activity.distance_m), 1.0),
+                    -activity.local_start_date.toordinal(),
+                    str(activity.id),
+                ),
+            )[:OBSERVED_EFFORT_CANDIDATES_PER_DISTANCE]
+        )
+        if candidates:
+            candidates_by_distance[distance] = candidates
+
+    candidate_ids = {
+        activity.id for candidates in candidates_by_distance.values() for activity in candidates
+    }
+    trackpoints_by_activity: dict[UUID, list[Trackpoint]] = defaultdict(list)
+    if candidate_ids:
+        for trackpoint in session.scalars(
+            select(Trackpoint)
+            .where(
+                Trackpoint.activity_id.in_(candidate_ids),
+                Trackpoint.distance_m.is_not(None),
+            )
+            .order_by(Trackpoint.activity_id, Trackpoint.sequence_number)
+        ):
+            trackpoints_by_activity[trackpoint.activity_id].append(trackpoint)
+
+    marks: list[FitnessMark] = []
+    for distance, candidates in candidates_by_distance.items():
+        target_m = standard_distance_meters(distance)
+        best: tuple[float, Activity, PerformanceEffortType] | None = None
+        for activity in candidates:
+            samples = tuple(
+                DistanceSample(
+                    elapsed_ms=trackpoint.elapsed_ms,
+                    distance_m=float(trackpoint.distance_m),
+                )
+                for trackpoint in trackpoints_by_activity.get(activity.id, ())
+                if trackpoint.distance_m is not None
+            )
+            try:
+                rolling = calculate_fastest_rolling_distance_effort(samples, distance)
+            except ValueError:
+                rolling = None
+            if rolling is not None:
+                elapsed_seconds = rolling.elapsed_time_seconds
+                effort_type = PerformanceEffortType.ROLLING_SEGMENT
+            else:
+                measured_distance_m = float(activity.distance_m)
+                deviation_pct = abs(measured_distance_m - target_m) / target_m * 100
+                if deviation_pct > DEFAULT_DISTANCE_TOLERANCE_PCT:
+                    continue
+                elapsed_seconds = (
+                    activity.elapsed_time_ms / 1_000 * (target_m / measured_distance_m)
+                )
+                effort_type = PerformanceEffortType.WHOLE_ACTIVITY
+
+            candidate = (elapsed_seconds, activity, effort_type)
+            if best is None or (candidate[0], -candidate[1].local_start_date.toordinal()) < (
+                best[0],
+                -best[1].local_start_date.toordinal(),
+            ):
+                best = candidate
+
+        if best is None:
+            continue
+        elapsed_seconds, activity, effort_type = best
+        marks.append(
+            FitnessMark(
+                distance=distance,
+                elapsed_time_seconds=round(elapsed_seconds, 6),
+                achieved_on=activity.local_start_date,
+                verification_status=PerformanceLabel.VERIFIED_MAX_EFFORT,
+                effort_type=effort_type,
+                activity_distance_km=round(float(activity.distance_m) / 1_000, 6),
+                session_kind=classify_session(activity.name).primary_kind,
+                is_verified=False,
+            )
+        )
+    return tuple(marks)
+
+
 class PerformanceQueryService:
     """Read verified PBs and build an auditable experimental fitness estimate."""
 
@@ -237,7 +342,28 @@ class PerformanceQueryService:
                 session_kind=classify_session(activity.name).primary_kind,
             )
 
-        marks = tuple(fitness_mark(record) for record in records)
+        verified_marks = tuple(fitness_mark(record) for record in records)
+        observed_marks = _observed_best_effort_marks(
+            session=self._session,
+            activities=activities,
+        )
+        verified_by_distance = {mark.distance: mark for mark in verified_marks}
+        observed_by_distance = {mark.distance: mark for mark in observed_marks}
+        marks = tuple(
+            min(
+                (
+                    mark
+                    for mark in (
+                        verified_by_distance.get(distance),
+                        observed_by_distance.get(distance),
+                    )
+                    if mark is not None
+                ),
+                key=lambda mark: (mark.elapsed_time_seconds, not mark.is_verified),
+            )
+            for distance in StandardDistance
+            if distance in verified_by_distance or distance in observed_by_distance
+        )
         anchor = max(marks, key=lambda mark: mark.achieved_on)
         older_anchor_records = tuple(
             record

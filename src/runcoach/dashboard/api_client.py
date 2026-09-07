@@ -1,6 +1,7 @@
 """Typed HTTP boundary between the dashboard and the RunCoach API."""
 
 import json
+from collections.abc import Mapping
 from datetime import date
 from json import JSONDecodeError
 from typing import cast
@@ -14,6 +15,32 @@ type JsonObject = dict[str, JsonValue]
 
 class DashboardApiError(RuntimeError):
     """Raised when the dashboard cannot obtain a valid API response."""
+
+
+def _http_error_message(error: HTTPError) -> str:
+    """Return an API's sanitized error detail when one is available."""
+
+    fallback = f"RunCoach API returned HTTP {error.code}."
+    try:
+        payload: object = json.loads(error.read(64 * 1024).decode("utf-8"))
+    except (JSONDecodeError, UnicodeDecodeError, OSError, ValueError):
+        return fallback
+    if not isinstance(payload, dict):
+        return fallback
+
+    detail = payload.get("detail")
+    if isinstance(detail, str) and detail.strip():
+        return detail.strip()
+    if not isinstance(detail, dict):
+        return fallback
+
+    message = detail.get("message")
+    code = detail.get("code")
+    if not isinstance(message, str) or not message.strip():
+        return fallback
+    if isinstance(code, str) and code.strip():
+        return f"{message.strip()} [{code.strip()}]"
+    return message.strip()
 
 
 class RunCoachApiClient:
@@ -54,10 +81,42 @@ class RunCoachApiClient:
             content_type="application/json",
         )
 
+    def register(self, registration: Mapping[str, JsonValue]) -> JsonObject:
+        """Create a pending athlete account with goal and benchmark metadata."""
+
+        body = json.dumps(registration, separators=(",", ":")).encode("utf-8")
+        return self._request_json(
+            "/api/v1/auth/register",
+            method="POST",
+            data=body,
+            content_type="application/json",
+        )
+
     def get_current_account(self) -> JsonObject:
         """Return the athlete display context for the current bearer session."""
 
         return self._get_json("/api/v1/auth/me")
+
+    def get_onboarding_account(self) -> JsonObject:
+        """Return account state for a pending or completed onboarding session."""
+
+        return self._get_json("/api/v1/auth/onboarding")
+
+    def upload_strava_archive(self, *, filename: str, content: bytes) -> JsonObject:
+        """Upload the required private Strava ZIP and build the initial plan."""
+
+        if not filename.casefold().endswith(".zip"):
+            raise ValueError("Strava history must be uploaded as a ZIP file.")
+        if not content:
+            raise ValueError("Strava history ZIP cannot be empty.")
+        return self._request_json(
+            "/api/v1/onboarding/strava-archive",
+            method="POST",
+            data=content,
+            content_type="application/zip",
+            extra_headers={"X-RunCoach-Filename": quote(filename, safe="")},
+            timeout_seconds=max(self._timeout_seconds, 300.0),
+        )
 
     def logout(self) -> None:
         """Revoke the current bearer session."""
@@ -342,7 +401,7 @@ class RunCoachApiClient:
             ) as response:
                 response_body = response.read()
         except HTTPError as error:
-            raise DashboardApiError(f"RunCoach API returned HTTP {error.code}.") from error
+            raise DashboardApiError(_http_error_message(error)) from error
         except (TimeoutError, URLError) as error:
             raise DashboardApiError(
                 "RunCoach API is unavailable or did not respond in time."
