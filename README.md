@@ -75,6 +75,8 @@ The operational data pipeline currently provides:
   evidence, generation, safety-review steps, and the approved or fallback recommendation.
 - A migration-backed multi-athlete onboarding foundation with one-to-one accounts, revocable
   opaque sessions, mandatory Strava-import progress, and separate research-consent history.
+- Operational account login, session inspection, logout, and authenticated athlete ownership
+  across private analytics and coaching endpoints.
 - An optional stateless OpenAI Responses API adapter with schema-constrained output; numeric
   predictions and training prescriptions remain owned by versioned RunCoach code.
 - Independent, health-checked API, dashboard, and PostgreSQL Compose services.
@@ -141,14 +143,16 @@ applying migrations, attach an account to the athlete already identified by
 `RUNCOACH_ATHLETE_ID` with:
 
 ```powershell
-uv run python -m runcoach.cli.bootstrap_account
+uv run python -m runcoach.cli.bootstrap_account --display-name 'Your display name'
 ```
 
 The command prompts for email and password interactively so credentials do not appear in shell
 history. It verifies that the existing athlete already has an accepted Strava import, exactly one
 active primary goal, and exactly one active plan. It then creates the account and marks onboarding
 ready while preserving the athlete UUID, activities, analytics, personal bests, goal, and plan.
-Running it again with the same credentials is idempotent. It does not grant model-research consent.
+The optional display name fills an empty existing value but never silently replaces a different
+name. Running it again with the same credentials is idempotent. It does not grant model-research
+consent.
 
 Run the API:
 
@@ -161,6 +165,32 @@ Verify readiness:
 ```powershell
 Invoke-RestMethod 'http://localhost:8000/health/ready'
 ```
+
+### Login and authenticated API access
+
+The dashboard now opens on a login page and displays the linked athlete name after successful
+authentication. It keeps the opaque bearer token only in Streamlit session memory and revokes it
+on sign-out. The API stores only the token's SHA-256 hash. Private analytics, plans, run uploads,
+and coaching derive `athlete_id` from that session; the browser does not supply an athlete ID.
+
+For direct PowerShell API calls, open a session without placing the password in shell history:
+
+```powershell
+$credentials = Get-Credential
+$loginBody = @{
+  email = $credentials.UserName
+  password = $credentials.GetNetworkCredential().Password
+} | ConvertTo-Json
+$login = Invoke-RestMethod `
+  -Method Post `
+  -Uri 'http://localhost:8000/api/v1/auth/login' `
+  -ContentType 'application/json' `
+  -Body $loginBody
+$headers = @{ Authorization = "Bearer $($login.access_token)" }
+```
+
+`GET /api/v1/auth/me` returns only display name, timezone, onboarding status, and session expiry.
+`POST /api/v1/auth/logout` revokes the current token. Health endpoints remain unauthenticated.
 
 ## Private data import
 
@@ -292,7 +322,8 @@ GET /api/v1/analytics/overview?as_of_date=2026-08-27
 Example PowerShell request:
 
 ```powershell
-Invoke-RestMethod 'http://localhost:8000/api/v1/analytics/overview' |
+Invoke-RestMethod -Headers $headers `
+  -Uri 'http://localhost:8000/api/v1/analytics/overview' |
   ConvertTo-Json -Depth 8
 ```
 
@@ -314,7 +345,8 @@ workload series:
 
 ```powershell
 Invoke-RestMethod `
-  'http://localhost:8000/api/v1/analytics/trends?weeks=12'
+  -Headers $headers `
+  -Uri 'http://localhost:8000/api/v1/analytics/trends?weeks=12'
 ```
 
 Optional query parameters:
@@ -336,7 +368,8 @@ The performance endpoint returns current verified 5K, 10K, half-marathon, and ma
 personal bests together with a versioned experimental current-fitness estimate:
 
 ```powershell
-Invoke-RestMethod 'http://localhost:8000/api/v1/analytics/performance' |
+Invoke-RestMethod -Headers $headers `
+  -Uri 'http://localhost:8000/api/v1/analytics/performance' |
   ConvertTo-Json -Depth 8
 ```
 
@@ -396,7 +429,7 @@ or private title—and the review endpoints are unavailable when the application
 The coaching API can assess a selected race goal and generate a progressive plan preview:
 
 ```powershell
-Invoke-RestMethod (
+Invoke-RestMethod -Headers $headers -Uri (
   'http://localhost:8000/api/v1/coaching/plan-preview?' +
   'distance=marathon&race_date=2027-01-31&' +
   'target_time_seconds=11400&days_per_week=6'
@@ -414,14 +447,17 @@ Persist the selected goal and plan, retrieve it later, or refresh it after impor
 activities:
 
 ```powershell
-Invoke-RestMethod -Method Post (
+Invoke-RestMethod -Method Post -Headers $headers -Uri (
   'http://localhost:8000/api/v1/coaching/plans/active?' +
   'distance=marathon&race_date=2027-01-31&' +
   'target_time_seconds=11400&days_per_week=6'
 )
-Invoke-RestMethod 'http://localhost:8000/api/v1/coaching/plans/active'
-Invoke-RestMethod -Method Post 'http://localhost:8000/api/v1/coaching/plans/active/refresh'
-Invoke-RestMethod 'http://localhost:8000/api/v1/coaching/plans/active/tracking'
+Invoke-RestMethod -Headers $headers `
+  -Uri 'http://localhost:8000/api/v1/coaching/plans/active'
+Invoke-RestMethod -Method Post -Headers $headers `
+  -Uri 'http://localhost:8000/api/v1/coaching/plans/active/refresh'
+Invoke-RestMethod -Headers $headers `
+  -Uri 'http://localhost:8000/api/v1/coaching/plans/active/tracking'
 ```
 
 Identical evidence reuses the active version. Changed fitness or training evidence creates a
@@ -498,6 +534,7 @@ $body = @{
 Invoke-RestMethod `
   -Method Post `
   -Uri 'http://localhost:8000/api/v1/coaching/chat' `
+  -Headers $headers `
   -ContentType 'application/json' `
   -Body $body
 ```

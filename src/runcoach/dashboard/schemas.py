@@ -26,6 +26,30 @@ class DashboardSchema(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
+class AthleteIdentity(DashboardSchema):
+    """Authenticated athlete context safe to display in the dashboard."""
+
+    display_name: str | None
+    timezone: str
+    onboarding_status: str
+
+
+class LoginSession(DashboardSchema):
+    """New opaque API session returned after credential verification."""
+
+    access_token: str = Field(min_length=32)
+    token_type: Literal["bearer"]
+    expires_at: datetime
+    athlete: AthleteIdentity
+
+
+class CurrentAccount(DashboardSchema):
+    """Current athlete context resolved from a bearer session."""
+
+    athlete: AthleteIdentity
+    session_expires_at: datetime
+
+
 class TrainingWindow(DashboardSchema):
     """Aggregate activity totals for a fixed date window."""
 

@@ -35,6 +35,70 @@ class FakeResponse:
         return self._body
 
 
+def test_authentication_calls_use_credentials_and_bearer_header(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: list[tuple[str, str, str | None, bytes | None]] = []
+    responses = iter(
+        (
+            b'{"access_token":"opaque-token","token_type":"bearer"}',
+            b'{"athlete":{"display_name":"Synthetic Athlete"}}',
+            b"",
+        )
+    )
+
+    def fake_urlopen(request: Request, timeout: float) -> FakeResponse:
+        del timeout
+        captured.append(
+            (
+                request.full_url,
+                request.get_method(),
+                request.get_header("Authorization"),
+                cast(bytes | None, request.data),
+            )
+        )
+        return FakeResponse(next(responses))
+
+    monkeypatch.setattr(api_client, "urlopen", fake_urlopen)
+    anonymous = RunCoachApiClient("http://localhost:8000")
+    login = anonymous.login(email="athlete@example.com", password="private test password")
+    authenticated = RunCoachApiClient(
+        "http://localhost:8000",
+        access_token="opaque-token",
+    )
+    current = authenticated.get_current_account()
+    authenticated.logout()
+
+    assert login["token_type"] == "bearer"
+    assert current["athlete"] == {"display_name": "Synthetic Athlete"}
+    assert captured[0][:3] == (
+        "http://localhost:8000/api/v1/auth/login",
+        "POST",
+        None,
+    )
+    assert json.loads((captured[0][3] or b"").decode()) == {
+        "email": "athlete@example.com",
+        "password": "private test password",
+    }
+    assert captured[1][:3] == (
+        "http://localhost:8000/api/v1/auth/me",
+        "GET",
+        "Bearer opaque-token",
+    )
+    assert captured[2][:3] == (
+        "http://localhost:8000/api/v1/auth/logout",
+        "POST",
+        "Bearer opaque-token",
+    )
+
+
+def test_logout_requires_a_nonempty_access_token() -> None:
+    with pytest.raises(ValueError, match="Logout requires"):
+        RunCoachApiClient("http://localhost:8000").logout()
+    with pytest.raises(ValueError, match="cannot be empty"):
+        RunCoachApiClient("http://localhost:8000", access_token=" ")
+
+
 def test_overview_uses_normalized_api_url(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

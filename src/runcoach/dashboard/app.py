@@ -2,6 +2,7 @@
 
 import os
 import re
+from contextlib import suppress
 from datetime import date, timedelta
 
 import pandas as pd
@@ -17,6 +18,8 @@ from runcoach.dashboard.schemas import (
     AnalyticsOverview,
     AnalyticsTrends,
     CoachingReply,
+    CurrentAccount,
+    LoginSession,
     PerformanceLabelAudit,
     PerformanceOverview,
     PersistedTrainingPlan,
@@ -25,6 +28,7 @@ from runcoach.dashboard.schemas import (
 )
 
 DEFAULT_API_URL = "http://localhost:8000"
+SESSION_TOKEN_KEY = "runcoach_access_token"
 CHART_CONFIG = {"displayModeBar": False, "responsive": True}
 DISTANCE_LABELS = {
     StandardDistance.FIVE_K: "5K",
@@ -36,21 +40,19 @@ DISTANCE_LABELS = {
 NEXT_MARATHON_DATE = date(2027, 1, 31)
 
 
-@st.cache_data(ttl=60, show_spinner=False)
 def load_dashboard_data(
     api_url: str,
     weeks: int,
 ) -> tuple[AnalyticsOverview, AnalyticsTrends, PerformanceOverview]:
     """Load and validate one consistent dashboard view."""
 
-    client = RunCoachApiClient(api_url)
+    client = authenticated_api_client(api_url)
     overview = AnalyticsOverview.model_validate(client.get_overview())
     trends = AnalyticsTrends.model_validate(client.get_trends(weeks=weeks))
     performance = PerformanceOverview.model_validate(client.get_performance())
     return overview, trends, performance
 
 
-@st.cache_data(ttl=60, show_spinner=False)
 def load_training_plan(
     api_url: str,
     distance: StandardDistance,
@@ -60,7 +62,7 @@ def load_training_plan(
 ) -> TrainingPlanPreview:
     """Load and validate a goal-based training-plan preview."""
 
-    payload = RunCoachApiClient(api_url).get_training_plan(
+    payload = authenticated_api_client(api_url).get_training_plan(
         distance=distance.value,
         race_date=race_date,
         target_time_seconds=target_time_seconds,
@@ -78,7 +80,7 @@ def save_training_plan(
 ) -> PersistedTrainingPlan:
     """Persist the selected goal and activate its generated plan."""
 
-    payload = RunCoachApiClient(api_url).save_training_plan(
+    payload = authenticated_api_client(api_url).save_training_plan(
         distance=distance.value,
         race_date=race_date,
         target_time_seconds=target_time_seconds,
@@ -90,14 +92,14 @@ def save_training_plan(
 def refresh_active_training_plan(api_url: str) -> PersistedTrainingPlan:
     """Refresh the active plan from the latest imported activity evidence."""
 
-    payload = RunCoachApiClient(api_url).refresh_active_training_plan()
+    payload = authenticated_api_client(api_url).refresh_active_training_plan()
     return PersistedTrainingPlan.model_validate(payload)
 
 
 def load_active_plan_tracking(api_url: str) -> ActivePlanTracking:
     """Load validated adherence and version history for the active plan."""
 
-    payload = RunCoachApiClient(api_url).get_active_training_plan_tracking()
+    payload = authenticated_api_client(api_url).get_active_training_plan_tracking()
     return ActivePlanTracking.model_validate(payload)
 
 
@@ -110,7 +112,7 @@ def upload_run(
 ) -> UploadedRunResult:
     """Upload one private FIT activity and validate the coaching update."""
 
-    payload = RunCoachApiClient(api_url).upload_run(
+    payload = authenticated_api_client(api_url).upload_run(
         filename=filename,
         title=title,
         content=content,
@@ -126,11 +128,52 @@ def ask_coach(
 ) -> CoachingReply:
     """Submit one question and validate the evidence-grounded response."""
 
-    payload = RunCoachApiClient(api_url).ask_coach(
+    payload = authenticated_api_client(api_url).ask_coach(
         message=message,
         conversation=conversation[-8:],
     )
     return CoachingReply.model_validate(payload)
+
+
+def authenticated_api_client(api_url: str) -> RunCoachApiClient:
+    """Build an API client from the bearer token held only in Streamlit session memory."""
+
+    access_token = st.session_state.get(SESSION_TOKEN_KEY)
+    if not isinstance(access_token, str) or not access_token:
+        raise DashboardApiError("Sign in to continue.")
+    return RunCoachApiClient(api_url, access_token=access_token)
+
+
+def load_current_account(api_url: str) -> CurrentAccount:
+    """Validate the current session and return its athlete display context."""
+
+    return CurrentAccount.model_validate(authenticated_api_client(api_url).get_current_account())
+
+
+def render_login(api_url: str) -> None:
+    """Render the credential gate without persisting secrets outside session memory."""
+
+    st.title("RunCoach AI")
+    st.caption("Sign in to your evidence-backed running coach.")
+    with st.form("account_login"):
+        email = st.text_input("Email", autocomplete="email")
+        password = st.text_input("Password", type="password", autocomplete="current-password")
+        submitted = st.form_submit_button("Sign in", type="primary", use_container_width=True)
+
+    if not submitted:
+        st.info("New-athlete signup will require a Strava history ZIP before a plan is created.")
+        return
+
+    try:
+        session = LoginSession.model_validate(
+            RunCoachApiClient(api_url).login(email=email, password=password)
+        )
+    except (DashboardApiError, ValidationError, ValueError):
+        st.error("Sign-in failed. Check your email and password.")
+        return
+
+    st.session_state[SESSION_TOKEN_KEY] = session.access_token
+    st.rerun()
 
 
 def upload_title_from_filename(filename: str) -> str:
@@ -535,7 +578,7 @@ def render_performance_label_audit(api_url: str) -> None:
     )
     try:
         audit = PerformanceLabelAudit.model_validate(
-            RunCoachApiClient(api_url).get_performance_label_audit(limit=1)
+            authenticated_api_client(api_url).get_performance_label_audit(limit=1)
         )
     except (DashboardApiError, ValidationError, ValueError) as error:
         st.info(
@@ -617,7 +660,7 @@ def render_performance_label_audit(api_url: str) -> None:
     try:
         elapsed_seconds = parse_duration(verified_time) if review_label is not None else None
         updated = PerformanceLabelAudit.model_validate(
-            RunCoachApiClient(api_url).review_performance_candidate(
+            authenticated_api_client(api_url).review_performance_candidate(
                 review_token=candidate.review_token,
                 review_status=review_status,
                 review_label=review_label,
@@ -943,15 +986,33 @@ def main() -> None:
         initial_sidebar_state="expanded",
     )
 
+    api_url = os.getenv("RUNCOACH_API_URL", DEFAULT_API_URL)
+    if SESSION_TOKEN_KEY not in st.session_state:
+        render_login(api_url)
+        return
+
+    try:
+        current_account = load_current_account(api_url)
+    except (DashboardApiError, ValidationError, ValueError):
+        st.session_state.pop(SESSION_TOKEN_KEY, None)
+        st.error("Your session expired. Sign in again.")
+        render_login(api_url)
+        return
+
     st.title("RunCoach AI")
     st.caption(
         "Evidence-backed running analytics calculated by deterministic, versioned pipelines."
     )
 
-    api_url = os.getenv("RUNCOACH_API_URL", DEFAULT_API_URL)
-
     with st.sidebar:
         st.header("Dashboard controls")
+        athlete_name = current_account.athlete.display_name or "Athlete"
+        st.success(f"Signed in as {athlete_name}")
+        if st.button("Sign out", use_container_width=True):
+            with suppress(DashboardApiError, ValueError):
+                authenticated_api_client(api_url).logout()
+            st.session_state.pop(SESSION_TOKEN_KEY, None)
+            st.rerun()
         selected_weeks = st.slider(
             "Training history",
             min_value=4,
@@ -962,7 +1023,7 @@ def main() -> None:
         )
 
         if st.button("Refresh calculated data", use_container_width=True):
-            load_dashboard_data.clear()
+            st.rerun()
 
         st.divider()
         st.subheader("Add a Strava run")
@@ -992,8 +1053,6 @@ def main() -> None:
                         title=run_title,
                         content=uploaded_run.getvalue(),
                     )
-                    load_dashboard_data.clear()
-                    load_training_plan.clear()
                     if upload_result.status == "duplicate":
                         st.info("This run was already imported; coaching was refreshed.")
                     else:

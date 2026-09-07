@@ -17,9 +17,15 @@ class DashboardApiError(RuntimeError):
 
 
 class RunCoachApiClient:
-    """Read-only client for dashboard-facing analytics endpoints."""
+    """Typed client for authenticated dashboard-facing API endpoints."""
 
-    def __init__(self, base_url: str, timeout_seconds: float = 5.0) -> None:
+    def __init__(
+        self,
+        base_url: str,
+        timeout_seconds: float = 5.0,
+        *,
+        access_token: str | None = None,
+    ) -> None:
         normalized_url = base_url.rstrip("/")
         parsed_url = urlsplit(normalized_url)
 
@@ -27,9 +33,40 @@ class RunCoachApiClient:
             raise ValueError("API base URL must be an absolute HTTP or HTTPS URL.")
         if timeout_seconds <= 0:
             raise ValueError("API timeout must be greater than zero.")
+        if access_token is not None and not access_token.strip():
+            raise ValueError("API access token cannot be empty.")
 
         self._base_url = normalized_url
         self._timeout_seconds = timeout_seconds
+        self._access_token = access_token
+
+    def login(self, *, email: str, password: str) -> JsonObject:
+        """Open a revocable account session without retaining the password."""
+
+        body = json.dumps(
+            {"email": email, "password": password},
+            separators=(",", ":"),
+        ).encode("utf-8")
+        return self._request_json(
+            "/api/v1/auth/login",
+            method="POST",
+            data=body,
+            content_type="application/json",
+        )
+
+    def get_current_account(self) -> JsonObject:
+        """Return the athlete display context for the current bearer session."""
+
+        return self._get_json("/api/v1/auth/me")
+
+    def logout(self) -> None:
+        """Revoke the current bearer session."""
+
+        if self._access_token is None:
+            raise ValueError("Logout requires an API access token.")
+        response_body = self._request_bytes("/api/v1/auth/logout", method="POST")
+        if response_body:
+            raise DashboardApiError("RunCoach API returned unexpected logout content.")
 
     def get_overview(self) -> JsonObject:
         """Return the current analytics overview."""
@@ -252,10 +289,41 @@ class RunCoachApiClient:
         extra_headers: dict[str, str] | None = None,
         timeout_seconds: float | None = None,
     ) -> JsonObject:
+        response_body = self._request_bytes(
+            path,
+            method=method,
+            data=data,
+            content_type=content_type,
+            extra_headers=extra_headers,
+            timeout_seconds=timeout_seconds,
+        )
+
+        try:
+            payload: object = json.loads(response_body.decode("utf-8"))
+        except (JSONDecodeError, UnicodeDecodeError) as error:
+            raise DashboardApiError("RunCoach API returned an invalid JSON response.") from error
+
+        if not isinstance(payload, dict):
+            raise DashboardApiError("RunCoach API returned an unexpected response structure.")
+
+        return cast(JsonObject, payload)
+
+    def _request_bytes(
+        self,
+        path: str,
+        *,
+        method: str,
+        data: bytes | None = None,
+        content_type: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+        timeout_seconds: float | None = None,
+    ) -> bytes:
         headers = {
             "Accept": "application/json",
             "User-Agent": "runcoach-dashboard",
         }
+        if self._access_token is not None:
+            headers["Authorization"] = f"Bearer {self._access_token}"
         if content_type is not None:
             headers["Content-Type"] = content_type
         if extra_headers is not None:
@@ -279,13 +347,4 @@ class RunCoachApiClient:
             raise DashboardApiError(
                 "RunCoach API is unavailable or did not respond in time."
             ) from error
-
-        try:
-            payload: object = json.loads(response_body.decode("utf-8"))
-        except (JSONDecodeError, UnicodeDecodeError) as error:
-            raise DashboardApiError("RunCoach API returned an invalid JSON response.") from error
-
-        if not isinstance(payload, dict):
-            raise DashboardApiError("RunCoach API returned an unexpected response structure.")
-
-        return cast(JsonObject, payload)
+        return cast(bytes, response_body)

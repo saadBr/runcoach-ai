@@ -1,7 +1,7 @@
 """Tests for credential hashing and existing-athlete account bootstrap."""
 
 from collections.abc import Iterator
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from uuid import UUID
 
 import pytest
@@ -11,10 +11,14 @@ from sqlalchemy.pool import StaticPool
 
 from runcoach.db.base import Base
 from runcoach.db.identity import (
+    AuthenticationRejectedError,
+    AuthenticationService,
     ExistingAthleteAccountService,
     IdentityConflictError,
     IdentityError,
     hash_password,
+    hash_session_token,
+    normalize_display_name,
     normalize_email,
     verify_password,
 )
@@ -22,6 +26,7 @@ from runcoach.db.models import (
     Activity,
     Athlete,
     AthleteOnboarding,
+    AuthSession,
     Goal,
     ImportBatch,
     ImportFile,
@@ -145,6 +150,16 @@ def test_password_policy_rejects_short_and_invalid_salt() -> None:
         hash_password(TEST_PASSWORD, salt=b"short")
 
 
+def test_display_name_normalization_is_bounded() -> None:
+    assert normalize_display_name("  Synthetic   Athlete  ") == "Synthetic Athlete"
+    with pytest.raises(ValueError, match="blank"):
+        normalize_display_name("   ")
+    with pytest.raises(ValueError, match="at most"):
+        normalize_display_name("a" * 121)
+    with pytest.raises(ValueError, match="control characters"):
+        normalize_display_name("Synthetic\nAthlete")
+
+
 def test_bootstrap_preserves_existing_profile_history_goal_and_plan(
     db_session: Session,
 ) -> None:
@@ -204,6 +219,32 @@ def test_bootstrap_is_idempotent_only_for_matching_credentials(db_session: Sessi
         )
 
 
+def test_bootstrap_can_fill_but_not_replace_a_missing_display_name(
+    db_session: Session,
+) -> None:
+    athlete = db_session.get(Athlete, ATHLETE_ID)
+    assert athlete is not None
+    athlete.display_name = None
+    db_session.commit()
+
+    service = ExistingAthleteAccountService(db_session)
+    service.bootstrap(
+        athlete_id=ATHLETE_ID,
+        email="athlete@example.com",
+        password=TEST_PASSWORD,
+        display_name="  Synthetic   Athlete  ",
+    )
+    assert athlete.display_name == "Synthetic Athlete"
+
+    with pytest.raises(IdentityConflictError, match="different display name"):
+        service.bootstrap(
+            athlete_id=ATHLETE_ID,
+            email="athlete@example.com",
+            password=TEST_PASSWORD,
+            display_name="Different Athlete",
+        )
+
+
 def test_bootstrap_rolls_back_when_required_existing_evidence_is_missing(
     db_session: Session,
 ) -> None:
@@ -221,3 +262,88 @@ def test_bootstrap_rolls_back_when_required_existing_evidence_is_missing(
 
     assert db_session.scalar(select(func.count()).select_from(UserAccount)) == 0
     assert db_session.scalar(select(func.count()).select_from(AthleteOnboarding)) == 0
+
+
+def _bootstrapped_identity(db_session: Session) -> None:
+    ExistingAthleteAccountService(db_session).bootstrap(
+        athlete_id=ATHLETE_ID,
+        email="athlete@example.com",
+        password=TEST_PASSWORD,
+    )
+
+
+def test_login_issues_only_an_opaque_session_token(db_session: Session) -> None:
+    _bootstrapped_identity(db_session)
+    login_time = datetime(2026, 9, 7, 12, tzinfo=UTC)
+
+    issued = AuthenticationService(db_session).login(
+        email=" ATHLETE@EXAMPLE.COM ",
+        password=TEST_PASSWORD,
+        now=login_time,
+    )
+
+    account = db_session.scalar(select(UserAccount))
+    stored_session = db_session.scalar(select(AuthSession))
+    assert account is not None
+    assert stored_session is not None
+    assert account.last_login_at is not None
+    assert account.last_login_at.replace(tzinfo=UTC) == login_time
+    assert issued.identity.athlete_id == ATHLETE_ID
+    assert issued.identity.display_name == "Existing Athlete"
+    assert issued.identity.onboarding_status == "ready"
+    assert issued.identity.expires_at == login_time + timedelta(days=30)
+    assert stored_session.token_hash == hash_session_token(issued.access_token)
+    assert issued.access_token not in stored_session.token_hash
+    assert len(stored_session.token_hash) == 64
+
+
+def test_session_authentication_and_logout_are_revocable(db_session: Session) -> None:
+    _bootstrapped_identity(db_session)
+    login_time = datetime(2026, 9, 7, 12, tzinfo=UTC)
+    service = AuthenticationService(db_session)
+    issued = service.login(
+        email="athlete@example.com",
+        password=TEST_PASSWORD,
+        now=login_time,
+    )
+
+    identity = service.authenticate(
+        issued.access_token,
+        now=login_time + timedelta(minutes=5),
+    )
+    assert identity.account_id == issued.identity.account_id
+    assert identity.athlete_id == ATHLETE_ID
+
+    service.logout(issued.access_token, now=login_time + timedelta(minutes=6))
+    with pytest.raises(AuthenticationRejectedError, match="required"):
+        service.authenticate(
+            issued.access_token,
+            now=login_time + timedelta(minutes=7),
+        )
+
+
+def test_login_and_expired_sessions_fail_without_leaking_account_state(
+    db_session: Session,
+) -> None:
+    _bootstrapped_identity(db_session)
+    login_time = datetime(2026, 9, 7, 12, tzinfo=UTC)
+    service = AuthenticationService(db_session)
+
+    for email, password in (
+        ("missing@example.com", TEST_PASSWORD),
+        ("athlete@example.com", "incorrect password"),
+        ("not-an-email", TEST_PASSWORD),
+    ):
+        with pytest.raises(AuthenticationRejectedError, match="Invalid email or password"):
+            service.login(email=email, password=password, now=login_time)
+
+    issued = service.login(
+        email="athlete@example.com",
+        password=TEST_PASSWORD,
+        now=login_time,
+    )
+    with pytest.raises(AuthenticationRejectedError, match="required"):
+        service.authenticate(
+            issued.access_token,
+            now=login_time + timedelta(days=31),
+        )

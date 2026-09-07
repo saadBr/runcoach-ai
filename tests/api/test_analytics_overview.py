@@ -200,9 +200,29 @@ def test_query_error_is_returned_as_not_found(
     }
 
 
-def test_missing_athlete_configuration_returns_service_unavailable(
+def test_overview_uses_authenticated_athlete_without_configured_id(
     client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    class FakeAnalyticsQueryService:
+        def __init__(self, session: object) -> None:
+            assert session is not None
+
+        def overview(
+            self,
+            *,
+            athlete_id: UUID,
+            as_of_date: date | None = None,
+        ) -> AnalyticsOverview:
+            assert athlete_id == ATHLETE_ID
+            assert as_of_date is None
+            return _overview()
+
+    monkeypatch.setattr(
+        analytics_routes,
+        "AnalyticsQueryService",
+        FakeAnalyticsQueryService,
+    )
     app.dependency_overrides[get_settings] = lambda: Settings(
         environment="test",
         athlete_id=None,
@@ -214,8 +234,8 @@ def test_missing_athlete_configuration_returns_service_unavailable(
     finally:
         app.dependency_overrides.clear()
 
-    assert response.status_code == 503
-    assert response.json() == {"detail": "Athlete configuration is unavailable."}
+    assert response.status_code == 200
+    assert response.json()["total_runs"] == 130
 
 
 def test_invalid_as_of_date_is_rejected(

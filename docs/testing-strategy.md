@@ -230,6 +230,12 @@ consent. Existing-athlete bootstrap tests assert that credentials are attached w
 the athlete, activities, active goal, or active training plan and that repeat execution is
 idempotent only for matching credentials.
 
+Authentication tests verify normalized credential login, salted password verification, opaque
+token issuance, hash-only session persistence, expiry, last-seen updates, revocation, sanitized
+failures, and session-derived athlete context. API tests require bearer authentication for private
+analytics and coaching routes. Dashboard tests verify the login gate, athlete-name display, bearer
+transport, and in-memory sign-out behavior.
+
 Use PostgreSQL rather than SQLite for integration behavior.
 
 Test:

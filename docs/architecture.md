@@ -4,7 +4,7 @@
 
 - Project: RunCoach AI
 - Document state: Living architecture aligned with the verified implementation
-- Last updated: 2026-09-06
+- Last updated: 2026-09-07
 - Architecture style: Modular monolith with separate runtime processes
 - Deployment model: Local private-data platform and sanitized cloud demonstration
 
@@ -96,6 +96,8 @@ The verified implementation currently provides:
 - An optional stateless OpenAI Responses API adapter using strict structured output.
 - A persistence foundation for one-to-one athlete accounts, revocable opaque sessions, mandatory
   Strava-history onboarding, and append-only model-research consent.
+- Database-backed login and logout, hashed opaque bearer sessions, a Streamlit credential gate,
+  and session-derived athlete ownership for private analytics and coaching requests.
 - Health-checked PostgreSQL, FastAPI, and Streamlit Compose services.
 
 ### Planned capabilities
@@ -104,8 +106,8 @@ The following remain planned and require their own implementation and validation
 
 - Persisted automatic rescheduling beyond the first detailed training week.
 - A machine-learning experiment selected after a label audit.
-- Login and signup services, tenant-scoped authorization, safe Strava ZIP processing, and the
-  onboarding interface over the implemented persistence foundation.
+- New-athlete signup, safe Strava ZIP processing, and the resumable onboarding interface over the
+  authenticated persistence foundation.
 - Controlled LangGraph orchestration over the implemented coaching-run audit records.
 - Sanitized cloud deployment.
 
@@ -167,8 +169,9 @@ flowchart LR
 | Analytics CLI | Versioned deterministic recalculation | PostgreSQL |
 
 The API waits for PostgreSQL readiness. The dashboard waits for API readiness. The dashboard
-container does not mount private files, receive the athlete UUID, or connect directly to
-PostgreSQL.
+container does not mount private files, receive an athlete UUID, or connect directly to
+PostgreSQL. It holds the raw bearer token only in Streamlit session memory; PostgreSQL stores only
+the token hash, expiry, last-seen time, and revocation state.
 
 ## Logical module boundaries
 
@@ -380,7 +383,9 @@ The API is a typed boundary over persisted deterministic results and narrowly sc
 
 ## Dashboard architecture
 
-The Streamlit dashboard is a presentation adapter, not an alternative analytical engine.
+The Streamlit dashboard is an authenticated presentation adapter, not an alternative analytical
+engine. Private requests carry an opaque bearer token, and FastAPI resolves the athlete owner from
+the corresponding database session before invoking analytics or coaching services.
 
 ```mermaid
 sequenceDiagram

@@ -10,6 +10,7 @@ from runcoach.config import get_settings
 from runcoach.db.identity import (
     ExistingAthleteAccountService,
     IdentityError,
+    normalize_display_name,
     normalize_email,
     validate_password,
 )
@@ -27,6 +28,10 @@ def _build_parser() -> argparse.ArgumentParser:
         "--athlete-id",
         type=UUID,
         help="Existing athlete UUID; defaults to RUNCOACH_ATHLETE_ID.",
+    )
+    parser.add_argument(
+        "--display-name",
+        help="Optional name shown after login; only fills a currently empty athlete name.",
     )
     return parser
 
@@ -47,6 +52,9 @@ def main(arguments: list[str] | None = None) -> int:
         parser.error("Passwords do not match.")
     try:
         email = normalize_email(email)
+        display_name = (
+            None if parsed.display_name is None else normalize_display_name(parsed.display_name)
+        )
         validate_password(password)
     except ValueError as error:
         parser.error(str(error))
@@ -57,6 +65,7 @@ def main(arguments: list[str] | None = None) -> int:
                 athlete_id=athlete_id,
                 email=email,
                 password=password,
+                display_name=display_name,
             )
     except IdentityError as error:
         parser.error(str(error))

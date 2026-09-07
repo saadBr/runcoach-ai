@@ -18,6 +18,7 @@ from runcoach.analytics.training_plan import (
     PlannedSessionKind,
     PlanPhase,
 )
+from runcoach.api.routes.authentication import AuthenticatedAthleteDependency
 from runcoach.coaching.chat import (
     CoachingChatError,
     CoachingReply,
@@ -296,15 +297,6 @@ class CoachingChatRequest(BaseModel):
     conversation: tuple[ConversationTurn, ...] = Field(default=(), max_length=8)
 
 
-def _configured_athlete_id(settings: Settings) -> UUID:
-    if settings.athlete_id is None:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Athlete configuration is unavailable.",
-        )
-    return settings.athlete_id
-
-
 def _persisted_response(result: PersistedTrainingPlan) -> PersistedTrainingPlanResponse:
     return PersistedTrainingPlanResponse(
         goal_id=result.goal_id,
@@ -394,7 +386,7 @@ def _uploaded_activity_response(
 
 @router.get("/plan-preview", response_model=TrainingPlanPreviewResponse)
 def training_plan_preview(
-    settings: SettingsDependency,
+    identity: AuthenticatedAthleteDependency,
     database_session: DatabaseSessionDependency,
     distance: Annotated[StandardDistance, Query(description="Target race distance.")],
     race_date: Annotated[date, Query(description="Target race date in YYYY-MM-DD format.")],
@@ -405,7 +397,7 @@ def training_plan_preview(
 
     try:
         preview = TrainingPlanQueryService(database_session).preview(
-            athlete_id=_configured_athlete_id(settings),
+            athlete_id=identity.athlete_id,
             distance=distance,
             race_date=race_date,
             target_time_seconds=target_time_seconds,
@@ -422,7 +414,7 @@ def training_plan_preview(
 
 @router.post("/plans/active", response_model=PersistedTrainingPlanResponse)
 def activate_training_plan(
-    settings: SettingsDependency,
+    identity: AuthenticatedAthleteDependency,
     database_session: DatabaseSessionDependency,
     distance: Annotated[StandardDistance, Query(description="Target race distance.")],
     race_date: Annotated[date, Query(description="Target race date in YYYY-MM-DD format.")],
@@ -433,7 +425,7 @@ def activate_training_plan(
 
     try:
         result = TrainingPlanPersistenceService(database_session).create_or_refresh(
-            athlete_id=_configured_athlete_id(settings),
+            athlete_id=identity.athlete_id,
             distance=distance,
             race_date=race_date,
             target_time_seconds=target_time_seconds,
@@ -449,14 +441,14 @@ def activate_training_plan(
 
 @router.get("/plans/active", response_model=PersistedTrainingPlanResponse)
 def active_training_plan(
-    settings: SettingsDependency,
+    identity: AuthenticatedAthleteDependency,
     database_session: DatabaseSessionDependency,
 ) -> PersistedTrainingPlanResponse:
     """Return the athlete's currently active persisted plan."""
 
     try:
         result = TrainingPlanPersistenceService(database_session).load_active(
-            athlete_id=_configured_athlete_id(settings)
+            athlete_id=identity.athlete_id
         )
     except TrainingPlanQueryError as error:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error)) from error
@@ -465,14 +457,14 @@ def active_training_plan(
 
 @router.post("/plans/active/refresh", response_model=PersistedTrainingPlanResponse)
 def refresh_active_training_plan(
-    settings: SettingsDependency,
+    identity: AuthenticatedAthleteDependency,
     database_session: DatabaseSessionDependency,
 ) -> PersistedTrainingPlanResponse:
     """Regenerate the active plan from the latest imported training evidence."""
 
     try:
         result = TrainingPlanPersistenceService(database_session).refresh_active(
-            athlete_id=_configured_athlete_id(settings)
+            athlete_id=identity.athlete_id
         )
     except (TrainingPlanQueryError, TrainingPlanPersistenceError) as error:
         raise HTTPException(
@@ -484,7 +476,7 @@ def refresh_active_training_plan(
 
 @router.get("/plans/active/tracking", response_model=ActivePlanTrackingResponse)
 def active_training_plan_tracking(
-    settings: SettingsDependency,
+    identity: AuthenticatedAthleteDependency,
     database_session: DatabaseSessionDependency,
     as_of_date: Annotated[
         date | None,
@@ -495,7 +487,7 @@ def active_training_plan_tracking(
 
     try:
         tracking = TrainingPlanTrackingService(database_session).overview(
-            athlete_id=_configured_athlete_id(settings),
+            athlete_id=identity.athlete_id,
             as_of_date=as_of_date,
         )
     except TrainingPlanTrackingError as error:
@@ -506,12 +498,13 @@ def active_training_plan_tracking(
 @router.post("/chat", response_model=CoachingReply)
 def coaching_chat(
     body: CoachingChatRequest,
+    identity: AuthenticatedAthleteDependency,
     settings: SettingsDependency,
     database_session: DatabaseSessionDependency,
 ) -> CoachingReply:
     """Answer from minimized deterministic evidence, with optional OpenAI interpretation."""
 
-    athlete_id = _configured_athlete_id(settings)
+    athlete_id = identity.athlete_id
     started_at = datetime.now(UTC)
     try:
         reply = build_conversational_coach(database_session, settings).answer(
@@ -544,6 +537,7 @@ def coaching_chat(
 @router.post("/runs", response_model=RunUploadResponse)
 async def upload_strava_run(
     request: Request,
+    identity: AuthenticatedAthleteDependency,
     settings: SettingsDependency,
     database_session: DatabaseSessionDependency,
     filename: Annotated[
@@ -578,7 +572,7 @@ async def upload_strava_run(
             detail=str(error),
         ) from error
 
-    athlete_id = _configured_athlete_id(settings)
+    athlete_id = identity.athlete_id
     athlete = database_session.get(Athlete, athlete_id)
     if athlete is None:
         raise HTTPException(

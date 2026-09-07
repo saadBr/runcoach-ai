@@ -76,7 +76,7 @@ Research consent is append-only and versioned. Only athletes whose latest decisi
 may contribute pseudonymized derived features and verified outcomes. Withdrawing consent excludes
 future research exports without disabling the athlete's account or personal coaching.
 
-## Implemented persistence foundation
+## Implemented identity and session boundary
 
 - `user_accounts`: unique login identity, athlete mapping, password-hash field, and account status.
 - `auth_sessions`: revocable opaque session hashes and expiration metadata.
@@ -84,10 +84,16 @@ future research exports without disabling the athlete's account or personal coac
 - `research_consents`: append-only granted or withdrawn decisions tied to a policy version.
 - `runcoach.cli.bootstrap_account`: an interactive, idempotent compatibility command that claims
   the configured existing athlete only after verifying persisted Strava, goal, and plan evidence.
+- `runcoach.db.identity.AuthenticationService`: normalized credential verification, opaque session
+  issuance, hash-only persistence, expiry validation, and revocation.
+- `/api/v1/auth/login`, `/api/v1/auth/me`, and `/api/v1/auth/logout`: sanitized authentication
+  contracts used by the Streamlit login gate.
+- Private analytics and coaching endpoints derive `athlete_id` from the authenticated session;
+  the dashboard sends no athlete identifier.
 
-Authentication services, archive ingestion, API authorization, and Streamlit screens are separate
-verified checkpoints. The existence of these tables does not claim that public authentication is
-already operational.
+New-athlete registration and safe Strava ZIP ingestion remain separate verified checkpoints. This
+local authentication implementation is not claimed as production-ready until HTTPS, rate limiting,
+credential recovery, and a deployment security review are complete.
 
 ## Security and privacy rules
 

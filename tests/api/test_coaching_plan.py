@@ -194,7 +194,23 @@ def test_plan_preview_returns_domain_error(
     assert response.json() == {"detail": "Race date must allow at least two training weeks."}
 
 
-def test_plan_preview_requires_athlete_configuration(client: TestClient) -> None:
+def test_plan_preview_uses_authenticated_athlete_without_configured_id(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeTrainingPlanQueryService:
+        def __init__(self, session: object) -> None:
+            assert session is not None
+
+        def preview(self, **kwargs: object) -> TrainingPlanPreview:
+            assert kwargs["athlete_id"] == ATHLETE_ID
+            return _preview()
+
+    monkeypatch.setattr(
+        coaching_routes,
+        "TrainingPlanQueryService",
+        FakeTrainingPlanQueryService,
+    )
     app.dependency_overrides[get_settings] = lambda: Settings(
         environment="test",
         athlete_id=None,
@@ -207,7 +223,7 @@ def test_plan_preview_requires_athlete_configuration(client: TestClient) -> None
     )
 
     app.dependency_overrides.clear()
-    assert response.status_code == 503
+    assert response.status_code == 200
 
 
 def test_active_plan_can_be_saved_loaded_and_refreshed(

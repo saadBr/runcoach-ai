@@ -29,6 +29,7 @@ from runcoach.analytics.performance_label_audit import (
 )
 from runcoach.analytics.performance_validation import PerformanceValidationReport
 from runcoach.analytics.session_classification import SessionKind, classify_session
+from runcoach.api.routes.authentication import AuthenticatedAthleteDependency
 from runcoach.config import Settings, get_settings
 from runcoach.db.analytics_queries import (
     AnalyticsQueryError,
@@ -312,20 +313,8 @@ class PerformanceLabelReviewRequest(BaseModel):
     review_notes: str | None = Field(default=None, max_length=500)
 
 
-def _configured_athlete_id(
-    settings: Settings,
-) -> UUID:
-    if settings.athlete_id is None:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Athlete configuration is unavailable.",
-        )
-
-    return settings.athlete_id
-
-
-def _require_local_label_audit(settings: Settings) -> None:
-    if settings.environment == "production":
+def _require_local_label_audit(settings: Settings, athlete_id: UUID) -> None:
+    if settings.environment == "production" or settings.athlete_id != athlete_id:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Performance label audit is unavailable.",
@@ -393,7 +382,7 @@ def _label_audit_response(
     response_model=AnalyticsOverviewResponse,
 )
 def analytics_overview(
-    settings: SettingsDependency,
+    identity: AuthenticatedAthleteDependency,
     database_session: DatabaseSessionDependency,
     as_of_date: Annotated[
         date | None,
@@ -406,11 +395,9 @@ def analytics_overview(
 ) -> AnalyticsOverviewResponse:
     """Return deterministic activity and workload aggregates."""
 
-    athlete_id = _configured_athlete_id(settings)
-
     try:
         overview = AnalyticsQueryService(database_session).overview(
-            athlete_id=athlete_id,
+            athlete_id=identity.athlete_id,
             as_of_date=as_of_date,
         )
     except AnalyticsQueryError as error:
@@ -427,7 +414,7 @@ def analytics_overview(
     response_model=AnalyticsTrendsResponse,
 )
 def analytics_trends(
-    settings: SettingsDependency,
+    identity: AuthenticatedAthleteDependency,
     database_session: DatabaseSessionDependency,
     weeks: Annotated[
         int,
@@ -446,11 +433,9 @@ def analytics_trends(
 ) -> AnalyticsTrendsResponse:
     """Return weekly training and daily workload trend series."""
 
-    athlete_id = _configured_athlete_id(settings)
-
     try:
         trends = AnalyticsTrendsQueryService(database_session).trends(
-            athlete_id=athlete_id,
+            athlete_id=identity.athlete_id,
             weeks=weeks,
             end_date=end_date,
         )
@@ -468,16 +453,14 @@ def analytics_trends(
     response_model=PerformanceOverviewResponse,
 )
 def analytics_performance(
-    settings: SettingsDependency,
+    identity: AuthenticatedAthleteDependency,
     database_session: DatabaseSessionDependency,
 ) -> PerformanceOverviewResponse:
     """Return verified PBs and an auditable experimental fitness estimate."""
 
-    athlete_id = _configured_athlete_id(settings)
-
     try:
         performance = PerformanceQueryService(database_session).overview(
-            athlete_id=athlete_id,
+            athlete_id=identity.athlete_id,
         )
     except PerformanceQueryError as error:
         raise HTTPException(
@@ -493,6 +476,7 @@ def analytics_performance(
     response_model=PerformanceLabelAuditResponse,
 )
 def performance_label_audit(
+    identity: AuthenticatedAthleteDependency,
     settings: SettingsDependency,
     review_status: Annotated[
         LabelReviewStatus | None,
@@ -503,8 +487,7 @@ def performance_label_audit(
 ) -> PerformanceLabelAuditResponse:
     """Return a private, minimized candidate queue and current validation state."""
 
-    _configured_athlete_id(settings)
-    _require_local_label_audit(settings)
+    _require_local_label_audit(settings, identity.athlete_id)
     try:
         audit = load_label_audit(label_audit_path(settings.private_data_dir))
         report = evaluate_label_audit(audit)
@@ -539,12 +522,12 @@ def review_performance_candidate(
         PathParameter(pattern=r"^[0-9a-f]{64}$"),
     ],
     request: PerformanceLabelReviewRequest,
+    identity: AuthenticatedAthleteDependency,
     settings: SettingsDependency,
 ) -> PerformanceLabelAuditResponse:
     """Persist one private label decision and immediately rerun validation."""
 
-    _configured_athlete_id(settings)
-    _require_local_label_audit(settings)
+    _require_local_label_audit(settings, identity.athlete_id)
     try:
         decision = LabelReviewDecision(
             review_status=request.review_status,

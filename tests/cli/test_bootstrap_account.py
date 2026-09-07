@@ -42,7 +42,9 @@ def test_main_bootstraps_configured_athlete_without_printing_credentials(
             athlete_id: UUID,
             email: str,
             password: str,
+            display_name: str | None,
         ) -> FakeBootstrapResult:
+            assert display_name is None
             captured.append((athlete_id, email, password))
             return FakeBootstrapResult(
                 account_id=ACCOUNT_ID,
@@ -104,6 +106,85 @@ def test_main_rejects_password_confirmation_mismatch(
 
     with pytest.raises(SystemExit) as error:
         bootstrap_account.main([])
+
+    assert error.value.code == 2
+
+
+def test_main_normalizes_and_forwards_display_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_session = object()
+
+    class FakeAccountService:
+        def __init__(self, session: object) -> None:
+            assert session is fake_session
+
+        def bootstrap(
+            self,
+            *,
+            athlete_id: UUID,
+            email: str,
+            password: str,
+            display_name: str | None,
+        ) -> FakeBootstrapResult:
+            assert athlete_id == ATHLETE_ID
+            assert email == "athlete@example.com"
+            assert password == "correct horse battery staple"
+            assert display_name == "Synthetic Athlete"
+            return FakeBootstrapResult(
+                account_id=ACCOUNT_ID,
+                created=False,
+                account_status="active",
+                onboarding_status="ready",
+            )
+
+    monkeypatch.setattr(
+        bootstrap_account,
+        "get_settings",
+        lambda: SimpleNamespace(athlete_id=ATHLETE_ID),
+    )
+    monkeypatch.setattr("builtins.input", lambda _prompt: "athlete@example.com")
+    monkeypatch.setattr(
+        bootstrap_account,
+        "getpass",
+        lambda _prompt: "correct horse battery staple",
+    )
+    monkeypatch.setattr(
+        bootstrap_account,
+        "SessionFactory",
+        lambda: nullcontext(fake_session),
+    )
+    monkeypatch.setattr(
+        bootstrap_account,
+        "ExistingAthleteAccountService",
+        FakeAccountService,
+    )
+
+    assert bootstrap_account.main(["--display-name", "  Synthetic   Athlete  "]) == 0
+
+
+def test_main_rejects_invalid_display_name_without_opening_a_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        bootstrap_account,
+        "get_settings",
+        lambda: SimpleNamespace(athlete_id=ATHLETE_ID),
+    )
+    monkeypatch.setattr("builtins.input", lambda _prompt: "athlete@example.com")
+    monkeypatch.setattr(
+        bootstrap_account,
+        "getpass",
+        lambda _prompt: "correct horse battery staple",
+    )
+    monkeypatch.setattr(
+        bootstrap_account,
+        "SessionFactory",
+        lambda: pytest.fail("A session must not open for an invalid display name."),
+    )
+
+    with pytest.raises(SystemExit) as error:
+        bootstrap_account.main(["--display-name", "Invalid\nName"])
 
     assert error.value.code == 2
 

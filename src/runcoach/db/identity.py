@@ -1,10 +1,10 @@
 """Identity primitives and safe bootstrap for the existing local athlete."""
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
-from hashlib import scrypt
+from datetime import UTC, datetime, timedelta
+from hashlib import scrypt, sha256
 from hmac import compare_digest
-from secrets import token_bytes
+from secrets import token_bytes, token_urlsafe
 from uuid import UUID
 
 from sqlalchemy import select
@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from runcoach.db.models import (
     Athlete,
     AthleteOnboarding,
+    AuthSession,
     Goal,
     ImportBatch,
     ImportFile,
@@ -30,6 +31,9 @@ PASSWORD_HASH_BYTES = 32
 PASSWORD_MAX_MEMORY_BYTES = 64 * 1024 * 1024
 MINIMUM_PASSWORD_LENGTH = 12
 MAXIMUM_PASSWORD_LENGTH = 1024
+MAXIMUM_DISPLAY_NAME_LENGTH = 120
+AUTH_SESSION_TOKEN_BYTES = 32
+AUTH_SESSION_TTL = timedelta(days=30)
 
 
 class IdentityError(RuntimeError):
@@ -40,6 +44,10 @@ class IdentityConflictError(IdentityError):
     """Raised when requested identity data conflicts with persisted ownership."""
 
 
+class AuthenticationRejectedError(IdentityError):
+    """Raised when credentials or a bearer session cannot authenticate an account."""
+
+
 @dataclass(frozen=True, slots=True)
 class BootstrappedAccount:
     """Privacy-minimized result of claiming an existing local athlete."""
@@ -48,6 +56,27 @@ class BootstrappedAccount:
     created: bool
     account_status: str
     onboarding_status: str
+
+
+@dataclass(frozen=True, slots=True)
+class AuthenticatedAthlete:
+    """Minimal account and athlete identity derived from a valid server-side session."""
+
+    session_id: UUID
+    account_id: UUID
+    athlete_id: UUID
+    display_name: str | None
+    timezone: str
+    onboarding_status: str
+    expires_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class IssuedAuthSession:
+    """One newly issued opaque token and its authenticated athlete context."""
+
+    access_token: str
+    identity: AuthenticatedAthlete
 
 
 def normalize_email(email: str) -> str:
@@ -64,6 +93,21 @@ def normalize_email(email: str) -> str:
         or len(normalized) > 320
     ):
         raise ValueError("Enter a valid email address.")
+    return normalized
+
+
+def normalize_display_name(display_name: str) -> str:
+    """Return a bounded display name without accepting control characters."""
+
+    if any(ord(character) < 32 for character in display_name):
+        raise ValueError("Display name contains unsupported control characters.")
+    normalized = " ".join(display_name.split())
+    if not normalized:
+        raise ValueError("Display name cannot be blank.")
+    if len(normalized) > MAXIMUM_DISPLAY_NAME_LENGTH:
+        raise ValueError(
+            f"Display name must contain at most {MAXIMUM_DISPLAY_NAME_LENGTH} characters."
+        )
     return normalized
 
 
@@ -152,6 +196,152 @@ def verify_password(password: str, encoded_hash: str) -> bool:
     return compare_digest(actual, expected)
 
 
+def hash_session_token(access_token: str) -> str:
+    """Return the irreversible storage representation of an opaque session token."""
+
+    return sha256(access_token.encode("utf-8")).hexdigest()
+
+
+class AuthenticationService:
+    """Issue, validate, and revoke database-backed athlete login sessions."""
+
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def login(
+        self,
+        *,
+        email: str,
+        password: str,
+        now: datetime | None = None,
+    ) -> IssuedAuthSession:
+        """Authenticate credentials and return a newly issued opaque bearer token."""
+
+        try:
+            normalized_email = normalize_email(email)
+        except ValueError as error:
+            raise AuthenticationRejectedError("Invalid email or password.") from error
+
+        current_time = now or datetime.now(UTC)
+        try:
+            with self._session.begin():
+                account = self._session.scalar(
+                    select(UserAccount).where(UserAccount.email_normalized == normalized_email)
+                )
+                if account is None or not verify_password(password, account.password_hash):
+                    raise AuthenticationRejectedError("Invalid email or password.")
+                if account.status != "active":
+                    raise AuthenticationRejectedError("Account is unavailable.")
+
+                athlete = self._session.get(Athlete, account.athlete_id)
+                onboarding = self._session.get(AthleteOnboarding, account.athlete_id)
+                if athlete is None or onboarding is None or onboarding.status != "ready":
+                    raise AuthenticationRejectedError("Account is unavailable.")
+
+                access_token = token_urlsafe(AUTH_SESSION_TOKEN_BYTES)
+                expires_at = current_time + AUTH_SESSION_TTL
+                auth_session = AuthSession(
+                    user_account_id=account.id,
+                    token_hash=hash_session_token(access_token),
+                    created_at=current_time,
+                    expires_at=expires_at,
+                    last_seen_at=current_time,
+                )
+                account.last_login_at = current_time
+                self._session.add(auth_session)
+                self._session.flush()
+                return IssuedAuthSession(
+                    access_token=access_token,
+                    identity=self._identity(
+                        auth_session=auth_session,
+                        account=account,
+                        athlete=athlete,
+                        onboarding=onboarding,
+                    ),
+                )
+        except AuthenticationRejectedError:
+            raise
+        except Exception as error:
+            raise IdentityError("Login failed safely.") from error
+
+    def authenticate(
+        self,
+        access_token: str,
+        *,
+        now: datetime | None = None,
+    ) -> AuthenticatedAthlete:
+        """Resolve a valid bearer token to its server-owned athlete identity."""
+
+        if not access_token:
+            raise AuthenticationRejectedError("Authentication is required.")
+        current_time = now or datetime.now(UTC)
+        try:
+            with self._session.begin():
+                auth_session = self._session.scalar(
+                    select(AuthSession).where(
+                        AuthSession.token_hash == hash_session_token(access_token),
+                        AuthSession.revoked_at.is_(None),
+                        AuthSession.expires_at > current_time,
+                    )
+                )
+                if auth_session is None:
+                    raise AuthenticationRejectedError("Authentication is required.")
+
+                account = self._session.get(UserAccount, auth_session.user_account_id)
+                if account is None or account.status != "active":
+                    raise AuthenticationRejectedError("Authentication is required.")
+                athlete = self._session.get(Athlete, account.athlete_id)
+                onboarding = self._session.get(AthleteOnboarding, account.athlete_id)
+                if athlete is None or onboarding is None or onboarding.status != "ready":
+                    raise AuthenticationRejectedError("Authentication is required.")
+
+                auth_session.last_seen_at = current_time
+                return self._identity(
+                    auth_session=auth_session,
+                    account=account,
+                    athlete=athlete,
+                    onboarding=onboarding,
+                )
+        except AuthenticationRejectedError:
+            raise
+        except Exception as error:
+            raise IdentityError("Session validation failed safely.") from error
+
+    def logout(self, access_token: str, *, now: datetime | None = None) -> None:
+        """Revoke a bearer token without revealing whether it was already invalid."""
+
+        current_time = now or datetime.now(UTC)
+        try:
+            with self._session.begin():
+                auth_session = self._session.scalar(
+                    select(AuthSession).where(
+                        AuthSession.token_hash == hash_session_token(access_token)
+                    )
+                )
+                if auth_session is not None and auth_session.revoked_at is None:
+                    auth_session.revoked_at = current_time
+        except Exception as error:
+            raise IdentityError("Logout failed safely.") from error
+
+    @staticmethod
+    def _identity(
+        *,
+        auth_session: AuthSession,
+        account: UserAccount,
+        athlete: Athlete,
+        onboarding: AthleteOnboarding,
+    ) -> AuthenticatedAthlete:
+        return AuthenticatedAthlete(
+            session_id=auth_session.id,
+            account_id=account.id,
+            athlete_id=athlete.id,
+            display_name=athlete.display_name,
+            timezone=athlete.timezone,
+            onboarding_status=onboarding.status,
+            expires_at=auth_session.expires_at,
+        )
+
+
 class ExistingAthleteAccountService:
     """Attach credentials to a fully initialized local athlete without replacing it."""
 
@@ -164,10 +354,14 @@ class ExistingAthleteAccountService:
         athlete_id: UUID,
         email: str,
         password: str,
+        display_name: str | None = None,
     ) -> BootstrappedAccount:
         """Create or safely reuse the account for one existing athlete."""
 
         normalized_email = normalize_email(email)
+        normalized_display_name = (
+            None if display_name is None else normalize_display_name(display_name)
+        )
         validate_password(password)
         try:
             with self._session.begin():
@@ -175,6 +369,7 @@ class ExistingAthleteAccountService:
                     athlete_id=athlete_id,
                     email_normalized=normalized_email,
                     password=password,
+                    display_name=normalized_display_name,
                 )
         except IdentityError:
             raise
@@ -187,6 +382,7 @@ class ExistingAthleteAccountService:
         athlete_id: UUID,
         email_normalized: str,
         password: str,
+        display_name: str | None,
     ) -> BootstrappedAccount:
         athlete = self._session.get(Athlete, athlete_id)
         if athlete is None:
@@ -198,8 +394,10 @@ class ExistingAthleteAccountService:
         if existing_account is not None:
             return self._reuse_existing_account(
                 account=existing_account,
+                athlete=athlete,
                 email_normalized=email_normalized,
                 password=password,
+                display_name=display_name,
             )
 
         email_owner = self._session.scalar(
@@ -212,6 +410,7 @@ class ExistingAthleteAccountService:
         plan = self._active_plan(goal.id)
         import_batch = self._latest_accepted_strava_batch(athlete_id)
         completed_at = datetime.now(UTC)
+        self._set_missing_display_name(athlete=athlete, display_name=display_name)
 
         account = UserAccount(
             athlete_id=athlete_id,
@@ -244,8 +443,10 @@ class ExistingAthleteAccountService:
         self,
         *,
         account: UserAccount,
+        athlete: Athlete,
         email_normalized: str,
         password: str,
+        display_name: str | None,
     ) -> BootstrappedAccount:
         onboarding = self._session.get(AthleteOnboarding, account.athlete_id)
         if account.email_normalized != email_normalized or not verify_password(
@@ -254,12 +455,29 @@ class ExistingAthleteAccountService:
             raise IdentityConflictError("The existing athlete account uses different credentials.")
         if account.status != "active" or onboarding is None or onboarding.status != "ready":
             raise IdentityConflictError("The existing athlete account is not ready for reuse.")
+        self._set_missing_display_name(athlete=athlete, display_name=display_name)
         return BootstrappedAccount(
             account_id=account.id,
             created=False,
             account_status=account.status,
             onboarding_status=onboarding.status,
         )
+
+    @staticmethod
+    def _set_missing_display_name(
+        *,
+        athlete: Athlete,
+        display_name: str | None,
+    ) -> None:
+        if display_name is None:
+            return
+        if athlete.display_name is None:
+            athlete.display_name = display_name
+            return
+        if athlete.display_name != display_name:
+            raise IdentityConflictError(
+                "The existing athlete profile already uses a different display name."
+            )
 
     def _active_primary_goal(self, athlete_id: UUID) -> Goal:
         goals = list(

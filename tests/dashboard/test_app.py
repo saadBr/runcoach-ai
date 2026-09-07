@@ -13,6 +13,7 @@ import pytest
 from streamlit.testing.v1 import AppTest
 
 from runcoach.dashboard.app import (
+    SESSION_TOKEN_KEY,
     daily_workload_frame,
     format_duration,
     format_optional,
@@ -23,6 +24,15 @@ from runcoach.dashboard.app import (
 from runcoach.dashboard.schemas import AnalyticsTrends
 
 APP_PATH = Path(__file__).resolve().parents[2] / "src" / "runcoach" / "dashboard" / "app.py"
+TEST_ACCESS_TOKEN = "opaque-dashboard-test-token-with-sufficient-length"
+CURRENT_ACCOUNT_PAYLOAD = {
+    "athlete": {
+        "display_name": "Synthetic Athlete",
+        "timezone": "Africa/Casablanca",
+        "onboarding_status": "ready",
+    },
+    "session_expires_at": "2026-10-07T12:00:00Z",
+}
 
 WORKLOAD_PAYLOAD = {
     "local_date": "2026-08-27",
@@ -403,6 +413,15 @@ class StubAnalyticsHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         request_url = urlsplit(self.path)
 
+        if request_url.path == "/api/v1/auth/me":
+            if not self._authorized():
+                return
+            self._respond(CURRENT_ACCOUNT_PAYLOAD)
+            return
+
+        if not self._authorized():
+            return
+
         if request_url.path == "/api/v1/analytics/overview":
             self._respond(OVERVIEW_PAYLOAD)
             return
@@ -441,6 +460,14 @@ class StubAnalyticsHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         request_url = urlsplit(self.path)
+        if request_url.path == "/api/v1/auth/logout":
+            if not self._authorized():
+                return
+            self.send_response(204)
+            self.end_headers()
+            return
+        if not self._authorized():
+            return
         if request_url.path in {
             "/api/v1/coaching/plans/active",
             "/api/v1/coaching/plans/active/refresh",
@@ -448,6 +475,12 @@ class StubAnalyticsHandler(BaseHTTPRequestHandler):
             self._respond(PERSISTED_TRAINING_PLAN_PAYLOAD)
             return
         self._respond({"detail": "Not found"}, status=404)
+
+    def _authorized(self) -> bool:
+        if self.headers.get("Authorization") == f"Bearer {TEST_ACCESS_TOKEN}":
+            return True
+        self._respond({"detail": "Authentication is required."}, status=401)
+        return False
 
     def _respond(self, payload: object, status: int = 200) -> None:
         body = json.dumps(payload).encode("utf-8")
@@ -484,7 +517,13 @@ def dashboard_api(
         server_thread.join(timeout=5)
 
 
-def test_dashboard_renders_validated_analytics(
+def _authenticated_dashboard() -> AppTest:
+    app = AppTest.from_file(APP_PATH, default_timeout=30).run()
+    app.session_state[SESSION_TOKEN_KEY] = TEST_ACCESS_TOKEN
+    return app.run()
+
+
+def test_dashboard_requires_login_before_loading_private_data(
     dashboard_api: None,
 ) -> None:
     app = AppTest.from_file(APP_PATH, default_timeout=30).run()
@@ -492,6 +531,20 @@ def test_dashboard_renders_validated_analytics(
     assert dashboard_api is None
     assert not app.exception
     assert app.title[0].value == "RunCoach AI"
+    assert [field.label for field in app.text_input] == ["Email", "Password"]
+    assert "Sign in" in [button.label for button in app.button]
+    assert not app.metric
+
+
+def test_dashboard_renders_validated_analytics(
+    dashboard_api: None,
+) -> None:
+    app = _authenticated_dashboard()
+
+    assert dashboard_api is None
+    assert not app.exception
+    assert app.title[0].value == "RunCoach AI"
+    assert "Signed in as Synthetic Athlete" in [message.value for message in app.success]
     assert [metric.label for metric in app.metric[:5]] == [
         "Total runs",
         "Total distance",
@@ -531,7 +584,7 @@ def test_dashboard_renders_validated_analytics(
 def test_history_slider_reruns_dashboard(
     dashboard_api: None,
 ) -> None:
-    app = AppTest.from_file(APP_PATH, default_timeout=30).run()
+    app = _authenticated_dashboard()
 
     history_slider = next(slider for slider in app.slider if slider.label == "Training history")
     history_slider.set_value(4).run()
@@ -544,7 +597,7 @@ def test_history_slider_reruns_dashboard(
 
 
 def test_training_plan_can_be_persisted_from_dashboard(dashboard_api: None) -> None:
-    app = AppTest.from_file(APP_PATH, default_timeout=30).run()
+    app = _authenticated_dashboard()
 
     save_button = next(button for button in app.button if button.label == "Save as active plan")
     save_button.click().run()

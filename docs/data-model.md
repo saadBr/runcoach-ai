@@ -3,14 +3,15 @@
 ## Status
 
 - Project: RunCoach AI
-- Document state: Implemented through the multi-athlete onboarding foundation
+- Document state: Implemented through authenticated athlete sessions
 - Last updated: 2026-09-07
 - Database: PostgreSQL 17
 - ORM and migrations: SQLAlchemy 2 and Alembic
 
 The logical model is implemented incrementally through Alembic migrations. Authentication and
-onboarding tables establish the multi-athlete boundary; login services and Strava archive
-orchestration remain separate application checkpoints.
+onboarding tables establish the multi-athlete boundary. Login, revocation, and session-derived
+athlete ownership are operational; new-athlete Strava archive orchestration remains a separate
+checkpoint.
 
 ## Modeling principles
 

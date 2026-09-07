@@ -8,12 +8,48 @@ from runcoach.dashboard.schemas import (
     AnalyticsOverview,
     AnalyticsTrends,
     CoachingReply,
+    CurrentAccount,
+    LoginSession,
     PerformanceLabelAudit,
     PerformanceOverview,
     PersistedTrainingPlan,
     TrainingPlanPreview,
     UploadedRunResult,
 )
+
+
+def test_authentication_schemas_validate_athlete_context_and_token() -> None:
+    login = LoginSession.model_validate(
+        {
+            "access_token": "opaque-session-token-with-sufficient-length",
+            "token_type": "bearer",
+            "expires_at": "2026-10-07T12:00:00Z",
+            "athlete": {
+                "display_name": "Synthetic Athlete",
+                "timezone": "Africa/Casablanca",
+                "onboarding_status": "ready",
+            },
+        }
+    )
+    current = CurrentAccount.model_validate(
+        {
+            "athlete": login.athlete.model_dump(mode="json"),
+            "session_expires_at": login.expires_at.isoformat(),
+        }
+    )
+
+    assert current.athlete.display_name == "Synthetic Athlete"
+    assert current.athlete.onboarding_status == "ready"
+
+    with pytest.raises(ValidationError):
+        LoginSession.model_validate(
+            {
+                "access_token": "short",
+                "token_type": "bearer",
+                "expires_at": "2026-10-07T12:00:00Z",
+                "athlete": current.athlete.model_dump(mode="json"),
+            }
+        )
 
 
 def overview_payload() -> dict[str, object]:
