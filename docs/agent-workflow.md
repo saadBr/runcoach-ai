@@ -244,6 +244,11 @@ is disabled.
 
 Transform approved evidence into a concise recommendation and explanation.
 
+`evidence_coach_v3` requires an answer-first structure: the first sentence answers the exact
+question with concrete time, pace, distance, or duration when evidence provides it. At most two
+short explanatory sentences or three practical actions may follow. Generic plan recitation and
+model-status preambles are not valid openings.
+
 ### Inputs
 
 Only:
@@ -515,8 +520,10 @@ A plain function pipeline is used for the current linear conversational slice. L
 because the approved workflow has multiple decision branches, a review loop, persisted state,
 and provider-independent fallback behavior once those later nodes are implemented.
 
-Conversation history is bounded to eight prior turns and remains in the dashboard session. Durable
-conversational memory, free-form tool selection, and agent-to-agent chat are outside the MVP.
+Conversation history is bounded to eight prior turns and remains in the dashboard session. The
+visible history is bound to the current bearer-session fingerprint and cleared on login changes,
+logout, or expiry so one account cannot inherit another account's messages. Durable raw-question
+memory, free-form tool selection, and agent-to-agent chat are outside the MVP.
 
 ## Academic concepts demonstrated
 

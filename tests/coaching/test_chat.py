@@ -45,7 +45,12 @@ def _context() -> CoachingContext:
                 evidence_id="training:history",
                 category="training",
                 summary="143 runs; 311.9 km in 28 days.",
-                facts={"total_runs": 143, "distance_28d_km": 311.9},
+                facts={
+                    "total_runs": 143,
+                    "runs_28d": 22,
+                    "distance_28d_km": 311.9,
+                    "longest_run_84d_km": 28.0,
+                },
             ),
             EvidenceItem(
                 evidence_id="workload:2026-09-06",
@@ -57,7 +62,13 @@ def _context() -> CoachingContext:
                 evidence_id="fitness:5k",
                 category="prediction",
                 summary="Experimental 5k race-readiness estimate is 18:03 with high confidence.",
-                facts={"distance": "5k", "race_readiness_time": "18:03"},
+                facts={
+                    "distance": "5k",
+                    "race_readiness_time": "18:03",
+                    "race_readiness_time_seconds": 1_083.0,
+                    "race_readiness_pace_seconds_per_km": 216.6,
+                    "confidence": "high",
+                },
             ),
             EvidenceItem(
                 evidence_id="fitness:marathon",
@@ -69,14 +80,21 @@ def _context() -> CoachingContext:
                 facts={
                     "distance": "marathon",
                     "race_readiness_time": "3:11:01",
+                    "race_readiness_time_seconds": 11_461.0,
                     "race_readiness_pace_seconds_per_km": 272.0,
+                    "confidence": "medium",
                 },
             ),
             EvidenceItem(
                 evidence_id="goal:active",
                 category="goal",
                 summary="Active marathon goal is scheduled for 2027-01-31; target is 3:10:00.",
-                facts={"distance": "marathon", "race_date": "2027-01-31"},
+                facts={
+                    "distance": "marathon",
+                    "race_date": "2027-01-31",
+                    "target_time": "3:10:00",
+                    "target_time_seconds": 11_400.0,
+                },
             ),
             EvidenceItem(
                 evidence_id="plan:tracking",
@@ -106,6 +124,8 @@ def _context() -> CoachingContext:
                     "kind": "easy",
                     "target_distance_km": 8.5,
                     "pace_range": "5:20/km to 5:50/km",
+                    "faster_seconds_per_km": 320.0,
+                    "slower_seconds_per_km": 350.0,
                 },
             ),
         ),
@@ -155,7 +175,7 @@ class FakeModel:
         ("Is my marathon goal achievable?", "fitness:marathon", "3:11:01"),
         ("What does my current form mean?", "workload:2026-09-06", "form index"),
         ("How did today's run go?", "plan:latest-session", "easier than planned"),
-        ("Summarize my training", "training:history", "143 runs"),
+        ("Summarize my training", "training:history", "311.9 km across 22 runs"),
     ),
 )
 def test_deterministic_coach_answers_common_questions_from_evidence(
@@ -178,6 +198,13 @@ def test_deterministic_coach_answers_common_questions_from_evidence(
     if "recovery" in question.casefold():
         assert reply.evidence_ids == ("plan:next-session:1",)
         assert "slower end" in reply.answer
+        assert reply.answer.startswith("Run 8.5 km on 2026-09-07 at 5:20/km to 5:50/km.")
+        assert "45:20-49:35" in reply.answer
+    if "How fast" in question:
+        assert reply.answer.startswith("Your current 5k estimate is 18:03 (3:37/km)")
+    if "achievable" in question:
+        assert reply.answer.startswith("Not yet—your 3:10:00 marathon target")
+        assert "1:01 faster" in reply.answer
 
 
 def test_medical_question_never_reaches_language_model() -> None:
@@ -314,6 +341,9 @@ def test_openai_adapter_requests_stateless_structured_output() -> None:
     assert reply.answer == "The next session is easy."
     assert transport.payload["model"] == "gpt-test"
     assert transport.payload["store"] is False
+    instructions = str(transport.payload["instructions"])
+    assert "directly answers the exact question" in instructions
+    assert "Do not begin by reciting the active plan" in instructions
     text = transport.payload["text"]
     assert isinstance(text, dict)
     assert text["format"]["type"] == "json_schema"

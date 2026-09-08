@@ -13,7 +13,10 @@ import pytest
 from streamlit.testing.v1 import AppTest
 
 from runcoach.dashboard.app import (
+    COACH_MESSAGES_KEY,
+    COACH_SESSION_OWNER_KEY,
     SESSION_TOKEN_KEY,
+    bind_private_state_to_session,
     daily_workload_frame,
     format_duration,
     format_optional,
@@ -25,6 +28,24 @@ from runcoach.dashboard.schemas import AnalyticsTrends
 
 APP_PATH = Path(__file__).resolve().parents[2] / "src" / "runcoach" / "dashboard" / "app.py"
 TEST_ACCESS_TOKEN = "opaque-dashboard-test-token-with-sufficient-length"
+
+
+def test_private_chat_state_is_preserved_only_for_the_same_session() -> None:
+    state: dict[str, object] = {}
+
+    bind_private_state_to_session(state, "first-session-token")
+    state[COACH_MESSAGES_KEY] = [{"role": "user", "content": "Private question"}]
+    original_owner = state[COACH_SESSION_OWNER_KEY]
+
+    bind_private_state_to_session(state, "first-session-token")
+    assert COACH_MESSAGES_KEY in state
+    assert state[COACH_SESSION_OWNER_KEY] == original_owner
+
+    bind_private_state_to_session(state, "different-account-session-token")
+    assert COACH_MESSAGES_KEY not in state
+    assert state[COACH_SESSION_OWNER_KEY] != original_owner
+
+
 CURRENT_ACCOUNT_PAYLOAD = {
     "athlete": {
         "display_name": "Synthetic Athlete",
@@ -583,6 +604,24 @@ def test_dashboard_renders_validated_analytics(
     sliders = {slider.label: slider.value for slider in app.slider}
     assert sliders["Training history"] == 12
     assert sliders["Running days per week"] == 6
+
+
+def test_sign_out_clears_token_and_private_coach_history(
+    dashboard_api: None,
+) -> None:
+    app = _authenticated_dashboard()
+    app.session_state[COACH_MESSAGES_KEY] = [
+        {"role": "user", "content": "Private account-specific question"}
+    ]
+
+    sign_out = next(button for button in app.button if button.label == "Sign out")
+    app = sign_out.click().run()
+
+    assert dashboard_api is None
+    assert SESSION_TOKEN_KEY not in app.session_state
+    assert COACH_MESSAGES_KEY not in app.session_state
+    assert COACH_SESSION_OWNER_KEY not in app.session_state
+    assert [tab.label for tab in app.tabs] == ["Sign in", "Create account"]
 
 
 def test_history_slider_reruns_dashboard(

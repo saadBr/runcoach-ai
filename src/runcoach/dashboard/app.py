@@ -2,8 +2,11 @@
 
 import os
 import re
+from collections.abc import MutableMapping
 from contextlib import suppress
 from datetime import date, timedelta
+from hashlib import sha256
+from typing import cast
 
 import pandas as pd
 import plotly.express as px
@@ -30,6 +33,8 @@ from runcoach.dashboard.schemas import (
 
 DEFAULT_API_URL = "http://localhost:8000"
 SESSION_TOKEN_KEY = "runcoach_access_token"
+COACH_MESSAGES_KEY = "coach_messages"
+COACH_SESSION_OWNER_KEY = "coach_session_owner"
 CHART_CONFIG = {"displayModeBar": False, "responsive": True}
 DISTANCE_LABELS = {
     StandardDistance.FIVE_K: "5K",
@@ -39,6 +44,36 @@ DISTANCE_LABELS = {
 }
 
 NEXT_MARATHON_DATE = date(2027, 1, 31)
+
+
+def bind_private_state_to_session(
+    state: MutableMapping[str, object],
+    access_token: str,
+) -> None:
+    """Keep visible private state available only to the bearer session that created it."""
+
+    owner = sha256(access_token.encode("utf-8")).hexdigest()
+    if state.get(COACH_SESSION_OWNER_KEY) != owner:
+        state.pop(COACH_MESSAGES_KEY, None)
+    state[COACH_SESSION_OWNER_KEY] = owner
+
+
+def establish_authenticated_session(access_token: str) -> None:
+    """Install a new token and isolate private dashboard state from prior accounts."""
+
+    bind_private_state_to_session(
+        cast(MutableMapping[str, object], st.session_state),
+        access_token,
+    )
+    st.session_state[SESSION_TOKEN_KEY] = access_token
+
+
+def clear_authenticated_session() -> None:
+    """Remove credentials and all account-scoped dashboard state."""
+
+    st.session_state.pop(SESSION_TOKEN_KEY, None)
+    st.session_state.pop(COACH_SESSION_OWNER_KEY, None)
+    st.session_state.pop(COACH_MESSAGES_KEY, None)
 
 
 def load_dashboard_data(
@@ -201,7 +236,7 @@ def render_login(api_url: str) -> None:
             except (DashboardApiError, ValidationError, ValueError):
                 st.error("Sign-in failed. Check your email and password.")
             else:
-                st.session_state[SESSION_TOKEN_KEY] = session.access_token
+                establish_authenticated_session(session.access_token)
                 st.rerun()
 
     with signup_tab:
@@ -298,6 +333,11 @@ def render_login(api_url: str) -> None:
             st.error("Passwords do not match.")
             return
 
+        progress = st.status(
+            "Creating your athlete account...",
+            expanded=True,
+        )
+        progress.write("Saving your profile, race goal, and benchmark effort.")
         try:
             benchmark_seconds = parse_duration(benchmark_time)
             target_seconds = parse_duration(target_time) if target_time.strip() else None
@@ -322,18 +362,40 @@ def render_login(api_url: str) -> None:
                     }
                 )
             )
-            st.session_state[SESSION_TOKEN_KEY] = registration.access_token
+            establish_authenticated_session(registration.access_token)
+            progress.update(
+                label="Processing your Strava history...",
+                state="running",
+            )
+            progress.write(
+                "Uploading and validating the private ZIP. Large histories can take "
+                "several minutes; keep this page open."
+            )
+            progress.write(
+                "Next, RunCoach will calculate your fitness evidence and create your "
+                "first training plan."
+            )
             upload_onboarding_archive(
                 api_url,
                 filename=strava_archive.name,
                 content=strava_archive.getvalue(),
             )
         except (DashboardApiError, ValidationError, ValueError) as error:
+            progress.update(
+                label="Setup needs your attention",
+                state="error",
+                expanded=True,
+            )
             st.error(str(error))
             if SESSION_TOKEN_KEY in st.session_state:
                 st.info("Your account is saved. Reload this page to retry the Strava ZIP.")
             return
 
+        progress.update(
+            label="Your analytics and training plan are ready",
+            state="complete",
+            expanded=False,
+        )
         st.success("Your Strava history, analytics, and first training plan are ready.")
         st.rerun()
 
@@ -356,6 +418,17 @@ def render_pending_onboarding(api_url: str, account: CurrentAccount) -> None:
     if st.button("Import history and create plan", type="primary", disabled=archive is None):
         if archive is None:
             return
+        progress = st.status(
+            "Processing your Strava history...",
+            expanded=True,
+        )
+        progress.write(
+            "Uploading and validating the private ZIP. Large histories can take several "
+            "minutes; keep this page open."
+        )
+        progress.write(
+            "RunCoach will then calculate your fitness evidence and create your first plan."
+        )
         try:
             completed = upload_onboarding_archive(
                 api_url,
@@ -363,15 +436,25 @@ def render_pending_onboarding(api_url: str, account: CurrentAccount) -> None:
                 content=archive.getvalue(),
             )
         except (DashboardApiError, ValidationError, ValueError) as error:
+            progress.update(
+                label="Import needs your attention",
+                state="error",
+                expanded=True,
+            )
             st.error(str(error))
             return
+        progress.update(
+            label="Your analytics and training plan are ready",
+            state="complete",
+            expanded=False,
+        )
         st.success(f"Ready: {completed.canonical_runs} runs imported and the first plan created.")
         st.rerun()
 
     if st.button("Sign out", key="pending_sign_out"):
         with suppress(DashboardApiError, ValueError):
             authenticated_api_client(api_url).logout()
-        st.session_state.pop(SESSION_TOKEN_KEY, None)
+        clear_authenticated_session()
         st.rerun()
 
 
@@ -1109,9 +1192,9 @@ def render_conversational_coach(api_url: str) -> None:
         "the resulting evidence."
     )
     if st.button("Clear coach conversation", key="clear_coach_conversation"):
-        st.session_state["coach_messages"] = []
+        st.session_state[COACH_MESSAGES_KEY] = []
         st.rerun()
-    history_value = st.session_state.get("coach_messages", [])
+    history_value = st.session_state.get(COACH_MESSAGES_KEY, [])
     history: list[dict[str, object]] = history_value if isinstance(history_value, list) else []
 
     if not history:
@@ -1127,7 +1210,7 @@ def render_conversational_coach(api_url: str) -> None:
                 "mode": "deterministic",
             }
         ]
-        st.session_state["coach_messages"] = history
+        st.session_state[COACH_MESSAGES_KEY] = history
 
     for message in history:
         role = str(message.get("role", "assistant"))
@@ -1179,7 +1262,7 @@ def render_conversational_coach(api_url: str) -> None:
                 },
             )
         )
-        st.session_state["coach_messages"] = history[-17:]
+        st.session_state[COACH_MESSAGES_KEY] = history[-17:]
         st.rerun()
 
 
@@ -1201,10 +1284,17 @@ def main() -> None:
     try:
         onboarding_account = load_onboarding_account(api_url)
     except (DashboardApiError, ValidationError, ValueError):
-        st.session_state.pop(SESSION_TOKEN_KEY, None)
+        clear_authenticated_session()
         st.error("Your session expired. Sign in again.")
         render_login(api_url)
         return
+
+    access_token = st.session_state.get(SESSION_TOKEN_KEY)
+    if isinstance(access_token, str):
+        bind_private_state_to_session(
+            cast(MutableMapping[str, object], st.session_state),
+            access_token,
+        )
 
     if onboarding_account.athlete.onboarding_status != "ready":
         render_pending_onboarding(api_url, onboarding_account)
@@ -1213,7 +1303,7 @@ def main() -> None:
     try:
         current_account = load_current_account(api_url)
     except (DashboardApiError, ValidationError, ValueError):
-        st.session_state.pop(SESSION_TOKEN_KEY, None)
+        clear_authenticated_session()
         st.error("Your session expired. Sign in again.")
         render_login(api_url)
         return
@@ -1230,7 +1320,7 @@ def main() -> None:
         if st.button("Sign out", use_container_width=True):
             with suppress(DashboardApiError, ValueError):
                 authenticated_api_client(api_url).logout()
-            st.session_state.pop(SESSION_TOKEN_KEY, None)
+            clear_authenticated_session()
             st.rerun()
         selected_weeks = st.slider(
             "Training history",

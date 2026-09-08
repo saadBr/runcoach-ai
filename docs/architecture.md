@@ -475,7 +475,9 @@ flowchart LR
 The optional OpenAI adapter uses the Responses API with strict JSON-schema output and request
 storage disabled. Generated evidence references are checked against the supplied catalog, and a
 deterministic reviewer rejects unsupported citations, strong guarantees, and selected medical
-language. Conversation history remains in the Streamlit session and raw questions are not stored.
+language. Conversation history remains in the Streamlit session, is bound to a SHA-256 fingerprint
+of the active bearer session, and is cleared whenever authentication changes or expires. Raw
+questions are not stored.
 Every successful answer now creates one transactional coaching-run record, three ordered audit
 steps for evidence assembly, generation mode, and safety review, plus the final approved or
 deterministic-fallback recommendation. The minimized state retains only a question hash and

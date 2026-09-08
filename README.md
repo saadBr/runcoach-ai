@@ -161,7 +161,9 @@ Strava benchmark effort, and the original Strava account-export ZIP. The account
 until the ZIP produces at least 10 running activities, the declared benchmark date matches one
 eligible run, deterministic analytics are calculated, and the first plan is persisted. A failed
 or interrupted import can be retried after signing in; private analytics remain inaccessible
-until onboarding reaches `ready`.
+until onboarding reaches `ready`. During this potentially multi-minute operation, the dashboard
+shows staged status feedback for account creation, private archive processing, and plan readiness;
+it does not invent a percentage because the synchronous import API does not expose one.
 
 The API validates every ZIP member before selectively extracting `activities.csv` and supported
 FIT, FIT.GZ, or GPX activity files into short-lived private storage. It rejects traversal paths,
@@ -526,7 +528,12 @@ next marathon on 2027-01-31 and supports a rolling one-year goal horizon. The Co
 questions using minimized current-fitness, workload, goal, adherence, and upcoming-session
 evidence. Each answer returns its evidence identifiers and limitations. OpenAI can explain this
 evidence when configured, but numeric predictions and prescribed training loads remain outputs
-of versioned, tested code. After a matched upload, questions such as `How did today's run go?`
+of versioned, tested code. The `evidence_coach_v3` response contract answers the exact question in
+its first sentence and uses concrete pace, distance, duration, or target gap when available;
+technical provenance and limitations remain visually secondary. Visible chat history is bound to
+the current bearer session and cleared
+on account changes, logout, or session expiry; raw questions are not stored. After a matched
+upload, questions such as `How did today's run go?`
 produce a deterministic post-run debrief comparing actual distance and average pace with the
 prescribed session before explaining the next plan action.
 
@@ -534,6 +541,8 @@ Successful coach responses are persisted as a minimized workflow audit. The data
 hash and length for the question rather than its raw text, the applicable context and prompt
 versions, referenced evidence identifiers, three ordered workflow steps, limitations, and the
 final recommendation. A response is not returned as successful when its audit transaction fails.
+Visible conversation history stays only in Streamlit session memory. It is bound to the current
+bearer-session fingerprint and erased on account changes, logout, or session expiry.
 
 Conversational coaching works in deterministic mode by default. To enable the optional OpenAI
 interpreter, set these values only in the ignored `.env` file and restart the API:
