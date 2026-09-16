@@ -6,7 +6,7 @@ from datetime import date
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Thread
-from typing import Any, cast
+from typing import Any, ClassVar, cast
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
@@ -365,6 +365,20 @@ PERSISTED_TRAINING_PLAN_PAYLOAD = {
     "preview": TRAINING_PLAN_PAYLOAD,
 }
 
+ACTIVE_TRAINING_PLAN_PAYLOAD = {
+    **PERSISTED_TRAINING_PLAN_PAYLOAD,
+    "created": False,
+    "preview": {
+        **TRAINING_PLAN_PAYLOAD,
+        "goal": {
+            "distance": "10k",
+            "race_date": "2026-12-01",
+            "target_time_seconds": 2_460,
+            "days_per_week": 5,
+        },
+    },
+}
+
 PLAN_TRACKING_PAYLOAD = {
     "goal_id": "018f0000-0000-7000-8000-000000000030",
     "plan_id": "018f0000-0000-7000-8000-000000000031",
@@ -455,6 +469,8 @@ class StubAnalyticsHandler(BaseHTTPRequestHandler):
     """Serve deterministic aggregate responses to the dashboard test."""
 
     chat_status = 200
+    active_plan_status = 200
+    plan_mutations: ClassVar[list[str]] = []
 
     def do_GET(self) -> None:
         request_url = urlsplit(self.path)
@@ -494,6 +510,16 @@ class StubAnalyticsHandler(BaseHTTPRequestHandler):
             self._respond(LABEL_AUDIT_PAYLOAD)
             return
 
+        if request_url.path == "/api/v1/coaching/plans/active":
+            if self.active_plan_status == 200:
+                self._respond(ACTIVE_TRAINING_PLAN_PAYLOAD)
+            else:
+                self._respond(
+                    {"detail": "No active persisted training plan exists."},
+                    status=self.active_plan_status,
+                )
+            return
+
         if request_url.path == "/api/v1/coaching/plan-preview":
             self._respond(TRAINING_PLAN_PAYLOAD)
             return
@@ -521,6 +547,7 @@ class StubAnalyticsHandler(BaseHTTPRequestHandler):
             "/api/v1/coaching/plans/active",
             "/api/v1/coaching/plans/active/refresh",
         }:
+            self.plan_mutations.append(request_url.path)
             self._respond(PERSISTED_TRAINING_PLAN_PAYLOAD)
             return
         if request_url.path == "/api/v1/coaching/chat":
@@ -556,6 +583,8 @@ def dashboard_api(
     """Run an isolated local aggregate API for one dashboard test."""
 
     StubAnalyticsHandler.chat_status = 200
+    StubAnalyticsHandler.active_plan_status = 200
+    StubAnalyticsHandler.plan_mutations = []
     server = ThreadingHTTPServer(("127.0.0.1", 0), StubAnalyticsHandler)
     server_thread = Thread(target=server.serve_forever, daemon=True)
     server_thread.start()
@@ -693,13 +722,15 @@ def test_dashboard_renders_validated_analytics(
     assert "Goal assessment" in [metric.label for metric in app.metric]
     assert "Active version" in [metric.label for metric in app.metric]
     assert "Distance adherence" in [metric.label for metric in app.metric]
-    assert app.selectbox[0].value == "marathon"
+    assert app.selectbox[0].value == "10k"
     race_date_input = next(widget for widget in app.date_input if widget.label == "Race date")
-    assert race_date_input.value == date(2027, 1, 31)
+    assert race_date_input.value == date(2026, 12, 1)
     assert race_date_input.max == date(2027, 8, 26)
     sliders = {slider.label: slider.value for slider in app.slider}
     assert sliders["Training history"] == 12
-    assert sliders["Running days per week"] == 6
+    assert sliders["Running days per week"] == 5
+    assert "Active training plan" in [heading.value for heading in app.subheader]
+    assert "View plan provenance" not in [expander.label for expander in app.expander]
 
 
 def test_sign_out_clears_token_and_private_coach_history(
@@ -791,12 +822,49 @@ def test_coach_retains_question_when_api_fails(dashboard_api: None) -> None:
 def test_training_plan_can_be_persisted_from_dashboard(dashboard_api: None) -> None:
     app = _authenticated_dashboard()
 
-    save_button = next(button for button in app.button if button.label == "Save as active plan")
+    save_button = next(button for button in app.button if button.label == "Save goal changes")
     save_button.click().run()
 
     assert dashboard_api is None
     assert not app.exception
     assert "Active plan v1 created and saved." in [message.value for message in app.success]
+
+
+def test_browser_refresh_only_reads_existing_plan(dashboard_api: None) -> None:
+    app = _authenticated_dashboard()
+
+    assert StubAnalyticsHandler.plan_mutations == []
+    app = app.run()
+
+    assert dashboard_api is None
+    assert not app.exception
+    assert StubAnalyticsHandler.plan_mutations == []
+    assert app.selectbox[0].value == "10k"
+
+
+def test_no_active_plan_shows_explicit_creation_state(dashboard_api: None) -> None:
+    StubAnalyticsHandler.active_plan_status = 404
+
+    app = _authenticated_dashboard()
+
+    assert dashboard_api is None
+    assert not app.exception
+    assert "Create active plan" in [button.label for button in app.button]
+    assert StubAnalyticsHandler.plan_mutations == []
+    assert any("do not have an active training plan" in message.value for message in app.info)
+
+
+def test_active_plan_updates_only_after_explicit_action(dashboard_api: None) -> None:
+    app = _authenticated_dashboard()
+
+    refresh = next(
+        button for button in app.button if button.label == "Update plan from latest training"
+    )
+    app = refresh.click().run()
+
+    assert dashboard_api is None
+    assert not app.exception
+    assert StubAnalyticsHandler.plan_mutations == ["/api/v1/coaching/plans/active/refresh"]
 
 
 def test_presentation_helpers_preserve_missing_evidence() -> None:

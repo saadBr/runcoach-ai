@@ -18,6 +18,7 @@ from runcoach.analytics.performance import StandardDistance
 from runcoach.dashboard.api_client import (
     DashboardApiError,
     DashboardAuthenticationError,
+    DashboardNotFoundError,
     RunCoachApiClient,
 )
 from runcoach.dashboard.schemas import (
@@ -138,6 +139,16 @@ def save_training_plan(
         target_time_seconds=target_time_seconds,
         days_per_week=days_per_week,
     )
+    return PersistedTrainingPlan.model_validate(payload)
+
+
+def load_active_training_plan(api_url: str) -> PersistedTrainingPlan | None:
+    """Return the persisted active plan, or ``None`` when the athlete has none."""
+
+    try:
+        payload = authenticated_api_client(api_url).get_active_training_plan()
+    except DashboardNotFoundError:
+        return None
     return PersistedTrainingPlan.model_validate(payload)
 
 
@@ -1023,15 +1034,14 @@ def render_weekly_table(frame: pd.DataFrame) -> None:
     )
 
 
-def render_training_plan(plan: TrainingPlanPreview) -> None:
+def render_training_plan(plan: TrainingPlanPreview, *, active: bool) -> None:
     """Render one goal assessment, first week, and full progression outline."""
 
-    st.subheader("Personalized training-plan preview")
-    st.caption(
-        "The preview is recalculated from current fitness and training evidence whenever "
-        "you change the goal. Save it to retain an auditable plan that can be refreshed "
-        "after new activities are imported."
-    )
+    st.subheader("Active training plan" if active else "Training-plan preview")
+    if active:
+        st.caption("Your saved plan, based on the training history available when it was created.")
+    else:
+        st.caption("Review this plan, then save it when the race goal and schedule look right.")
     status, readiness, target, horizon = st.columns(4)
     status.metric("Goal assessment", plan.goal_status.value.replace("_", " ").title())
     readiness.metric("Current readiness", format_duration(plan.current_readiness_seconds))
@@ -1080,20 +1090,6 @@ def render_training_plan(plan: TrainingPlanPreview) -> None:
 
     st.info(" ".join(plan.rationale))
     st.warning("Guardrails: " + " ".join(plan.guardrails))
-    with st.expander("View plan provenance"):
-        st.code(
-            "\n".join(
-                (
-                    f"Algorithm: {plan.algorithm_version}",
-                    f"Evidence date: {plan.as_of_date.isoformat()}",
-                    f"Plan start: {plan.plan_start_date.isoformat()}",
-                    f"Recent weekly distance: {plan.recent_weekly_distance_km:.1f} km",
-                    f"Preparation score: {plan.current_preparation_score:.3f}",
-                    f"Preview status: {plan.status}",
-                )
-            ),
-            language="text",
-        )
 
 
 def render_plan_tracking(tracking: ActivePlanTracking) -> None:
@@ -1321,6 +1317,7 @@ def main() -> None:
     try:
         current_account = load_current_account(api_url)
         overview, trends, performance = load_dashboard_data(api_url, selected_weeks)
+        active_plan = load_active_training_plan(api_url)
     except DashboardAuthenticationError:
         loading_placeholder.empty()
         clear_authenticated_session()
@@ -1468,12 +1465,31 @@ def main() -> None:
         render_conversational_coach(api_url)
 
     with plan_tab:
-        st.subheader("Choose a race goal")
+        st.subheader("Training plan")
+        if active_plan is None:
+            st.info(
+                "You do not have an active training plan yet. Choose a race goal to create one."
+            )
+        else:
+            active_goal = active_plan.preview.goal
+            st.caption(
+                f"Your active {distance_label(active_goal.distance)} plan targets "
+                f"{active_goal.race_date.isoformat()}."
+            )
+
+        goal_options = tuple(StandardDistance)
+        default_distance = (
+            active_plan.preview.goal.distance
+            if active_plan is not None
+            else StandardDistance.MARATHON
+        )
+        session_owner = str(st.session_state.get(COACH_SESSION_OWNER_KEY, "session"))[:12]
         goal_distance = st.selectbox(
             "Race distance",
-            options=tuple(StandardDistance),
-            index=3,
+            options=goal_options,
+            index=goal_options.index(default_distance),
             format_func=distance_label,
+            key=f"plan_distance_{session_owner}",
         )
         goal_estimate = next(
             estimate
@@ -1483,83 +1499,134 @@ def main() -> None:
         earliest_goal_date = performance.current_fitness.as_of_date + timedelta(days=21)
         latest_goal_date = performance.current_fitness.as_of_date + timedelta(days=364)
         default_goal_date = performance.current_fitness.as_of_date + timedelta(weeks=12)
-        if (
+        if active_plan is not None and goal_distance is active_plan.preview.goal.distance:
+            default_goal_date = active_plan.preview.goal.race_date
+        elif (
             goal_distance is StandardDistance.MARATHON
             and earliest_goal_date <= NEXT_MARATHON_DATE <= latest_goal_date
         ):
             default_goal_date = NEXT_MARATHON_DATE
+        active_target_seconds = (
+            active_plan.preview.goal.target_time_seconds
+            if active_plan is not None and goal_distance is active_plan.preview.goal.distance
+            else goal_estimate.race_readiness_time_seconds
+        )
+        default_days_per_week = (
+            active_plan.preview.goal.days_per_week if active_plan is not None else 6
+        )
         goal_columns = st.columns(3)
         with goal_columns[0]:
             goal_date = st.date_input(
                 "Race date",
                 value=default_goal_date,
-                min_value=earliest_goal_date,
-                max_value=latest_goal_date,
+                min_value=min(earliest_goal_date, default_goal_date),
+                max_value=max(latest_goal_date, default_goal_date),
                 help=(
                     f"Goals can be planned through {latest_goal_date.isoformat()}. "
                     "The next marathon is preselected for 2027-01-31."
                 ),
-                key=f"race_date_{goal_distance.value}",
+                key=f"race_date_{session_owner}_{goal_distance.value}",
             )
         with goal_columns[1]:
             target_text = st.text_input(
                 "Target time",
-                value=format_duration(goal_estimate.race_readiness_time_seconds),
+                value=(
+                    "" if active_target_seconds is None else format_duration(active_target_seconds)
+                ),
                 help="Use M:SS or H:MM:SS.",
-                key=f"target_time_{goal_distance.value}",
+                key=f"target_time_{session_owner}_{goal_distance.value}",
             )
         with goal_columns[2]:
             plan_days_per_week = st.slider(
                 "Running days per week",
                 min_value=3,
                 max_value=7,
-                value=6,
+                value=default_days_per_week,
+                key=f"plan_days_{session_owner}",
             )
 
         try:
-            target_seconds = parse_duration(target_text)
-            save_column, refresh_column = st.columns(2)
-            save_selected = save_column.button(
-                "Save as active plan",
-                type="primary",
-                use_container_width=True,
-            )
-            refresh_selected = refresh_column.button(
-                "Refresh active plan",
-                use_container_width=True,
-            )
-            if save_selected:
-                persisted = save_training_plan(
-                    api_url,
-                    goal_distance,
-                    goal_date,
-                    target_seconds,
-                    plan_days_per_week,
+            target_seconds = parse_duration(target_text) if target_text.strip() else None
+            refresh_selected = False
+            if active_plan is None:
+                save_selected = st.button(
+                    "Create active plan",
+                    type="primary",
+                    use_container_width=True,
                 )
+            else:
+                save_column, refresh_column = st.columns(2)
+                save_selected = save_column.button(
+                    "Save goal changes",
+                    type="primary",
+                    use_container_width=True,
+                )
+                refresh_selected = refresh_column.button(
+                    "Update plan from latest training",
+                    use_container_width=True,
+                )
+
+            if save_selected:
+                with st.spinner("Saving your training plan..."):
+                    persisted = save_training_plan(
+                        api_url,
+                        goal_distance,
+                        goal_date,
+                        target_seconds,
+                        plan_days_per_week,
+                    )
+                active_plan = persisted
                 plan = persisted.preview
+                plan_is_active = True
                 action = "created" if persisted.created else "reused"
                 st.success(f"Active plan v{persisted.version} {action} and saved.")
             elif refresh_selected:
-                persisted = refresh_active_training_plan(api_url)
+                with st.spinner("Updating your plan from the latest training..."):
+                    persisted = refresh_active_training_plan(api_url)
+                active_plan = persisted
                 plan = persisted.preview
+                plan_is_active = True
                 action = "created" if persisted.created else "already current"
                 st.success(f"Active plan v{persisted.version}: {action}.")
             else:
-                plan = load_training_plan(
-                    api_url,
-                    goal_distance,
-                    goal_date,
-                    target_seconds,
-                    plan_days_per_week,
+                selected_active_goal = active_plan.preview.goal if active_plan is not None else None
+                target_matches = selected_active_goal is not None and (
+                    selected_active_goal.target_time_seconds == target_seconds
+                    or (
+                        selected_active_goal.target_time_seconds is not None
+                        and target_seconds is not None
+                        and round(selected_active_goal.target_time_seconds) == round(target_seconds)
+                    )
                 )
-            render_training_plan(plan)
-            try:
-                render_plan_tracking(load_active_plan_tracking(api_url))
-            except (DashboardApiError, ValidationError) as tracking_error:
-                st.caption(f"Active plan tracking is unavailable: {tracking_error}")
-        except (DashboardApiError, ValidationError, ValueError) as error:
-            st.error("Training plan could not be generated.")
-            st.caption(str(error))
+                selection_matches_active = (
+                    selected_active_goal is not None
+                    and selected_active_goal.distance is goal_distance
+                    and selected_active_goal.race_date == goal_date
+                    and selected_active_goal.days_per_week == plan_days_per_week
+                    and target_matches
+                )
+                if selection_matches_active and active_plan is not None:
+                    plan = active_plan.preview
+                    plan_is_active = True
+                else:
+                    with st.spinner("Preparing your plan preview..."):
+                        plan = load_training_plan(
+                            api_url,
+                            goal_distance,
+                            goal_date,
+                            target_seconds,
+                            plan_days_per_week,
+                        )
+                    plan_is_active = False
+
+            render_training_plan(plan, active=plan_is_active)
+            if plan_is_active:
+                try:
+                    render_plan_tracking(load_active_plan_tracking(api_url))
+                except (DashboardApiError, ValidationError):
+                    st.info("Plan progress is temporarily unavailable. Please try again later.")
+        except (DashboardApiError, ValidationError, ValueError):
+            st.error("We couldn't prepare that training plan. Check the goal and try again.")
 
     with workload_tab:
         render_workload(workload_data)

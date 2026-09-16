@@ -15,6 +15,7 @@ from runcoach.dashboard import api_client
 from runcoach.dashboard.api_client import (
     DashboardApiError,
     DashboardAuthenticationError,
+    DashboardNotFoundError,
     RunCoachApiClient,
 )
 
@@ -544,6 +545,28 @@ def test_client_distinguishes_rejected_session(
             "http://localhost:8000",
             access_token="opaque-session-token-with-sufficient-length",
         ).get_current_account()
+
+
+def test_client_distinguishes_missing_optional_resource(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_urlopen(request: Request, timeout: float) -> Never:
+        del timeout
+        raise HTTPError(
+            request.full_url,
+            404,
+            "Not found",
+            hdrs=Message(),
+            fp=BytesIO(b'{"detail":"No active persisted training plan exists."}'),
+        )
+
+    monkeypatch.setattr(api_client, "urlopen", fake_urlopen)
+
+    with pytest.raises(DashboardNotFoundError, match="No active persisted training plan"):
+        RunCoachApiClient(
+            "http://localhost:8000",
+            access_token="opaque-session-token-with-sufficient-length",
+        ).get_active_training_plan()
 
 
 @pytest.mark.parametrize(
