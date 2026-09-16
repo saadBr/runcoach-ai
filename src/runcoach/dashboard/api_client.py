@@ -17,6 +17,10 @@ class DashboardApiError(RuntimeError):
     """Raised when the dashboard cannot obtain a valid API response."""
 
 
+class DashboardAuthenticationError(DashboardApiError):
+    """Raised when the API rejects the current bearer session."""
+
+
 def _http_error_message(error: HTTPError) -> str:
     """Return an API's sanitized error detail when one is available."""
 
@@ -401,6 +405,8 @@ class RunCoachApiClient:
             ) as response:
                 response_body = response.read()
         except HTTPError as error:
+            if error.code == 401:
+                raise DashboardAuthenticationError(_http_error_message(error)) from error
             raise DashboardApiError(_http_error_message(error)) from error
         except (TimeoutError, URLError) as error:
             raise DashboardApiError(

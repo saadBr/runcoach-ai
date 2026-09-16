@@ -15,7 +15,11 @@ import streamlit as st
 from pydantic import ValidationError
 
 from runcoach.analytics.performance import StandardDistance
-from runcoach.dashboard.api_client import DashboardApiError, RunCoachApiClient
+from runcoach.dashboard.api_client import (
+    DashboardApiError,
+    DashboardAuthenticationError,
+    RunCoachApiClient,
+)
 from runcoach.dashboard.schemas import (
     ActivePlanTracking,
     AnalyticsOverview,
@@ -35,6 +39,8 @@ DEFAULT_API_URL = "http://localhost:8000"
 SESSION_TOKEN_KEY = "runcoach_access_token"
 COACH_MESSAGES_KEY = "coach_messages"
 COACH_SESSION_OWNER_KEY = "coach_session_owner"
+HISTORY_WEEKS_KEY = "dashboard_history_weeks"
+DEFAULT_HISTORY_WEEKS = 12
 CHART_CONFIG = {"displayModeBar": False, "responsive": True}
 DISTANCE_LABELS = {
     StandardDistance.FIVE_K: "5K",
@@ -74,6 +80,16 @@ def clear_authenticated_session() -> None:
     st.session_state.pop(SESSION_TOKEN_KEY, None)
     st.session_state.pop(COACH_SESSION_OWNER_KEY, None)
     st.session_state.pop(COACH_MESSAGES_KEY, None)
+
+
+def dashboard_history_weeks(state: MutableMapping[str, object]) -> int:
+    """Return a valid history window before its sidebar control is rendered."""
+
+    value = state.get(HISTORY_WEEKS_KEY, DEFAULT_HISTORY_WEEKS)
+    if not isinstance(value, int) or isinstance(value, bool) or not 4 <= value <= 52:
+        value = DEFAULT_HISTORY_WEEKS
+    state[HISTORY_WEEKS_KEY] = value
+    return value
 
 
 def load_dashboard_data(
@@ -1281,14 +1297,6 @@ def main() -> None:
         render_login(api_url)
         return
 
-    try:
-        onboarding_account = load_onboarding_account(api_url)
-    except (DashboardApiError, ValidationError, ValueError):
-        clear_authenticated_session()
-        st.error("Your session expired. Sign in again.")
-        render_login(api_url)
-        return
-
     access_token = st.session_state.get(SESSION_TOKEN_KEY)
     if isinstance(access_token, str):
         bind_private_state_to_session(
@@ -1296,17 +1304,47 @@ def main() -> None:
             access_token,
         )
 
-    if onboarding_account.athlete.onboarding_status != "ready":
-        render_pending_onboarding(api_url, onboarding_account)
-        return
-
+    loading_placeholder = st.empty()
+    loading_placeholder.status("Loading your dashboard...", expanded=False)
     try:
-        current_account = load_current_account(api_url)
-    except (DashboardApiError, ValidationError, ValueError):
+        onboarding_account = load_onboarding_account(api_url)
+    except DashboardAuthenticationError:
+        loading_placeholder.empty()
         clear_authenticated_session()
         st.error("Your session expired. Sign in again.")
         render_login(api_url)
         return
+    except (DashboardApiError, ValidationError, ValueError):
+        loading_placeholder.empty()
+        st.title("RunCoach AI")
+        st.error("We couldn't load your dashboard. Check the service and try again.")
+        if st.button("Try again", type="primary"):
+            st.rerun()
+        return
+
+    if onboarding_account.athlete.onboarding_status != "ready":
+        loading_placeholder.empty()
+        render_pending_onboarding(api_url, onboarding_account)
+        return
+
+    selected_weeks = dashboard_history_weeks(cast(MutableMapping[str, object], st.session_state))
+    try:
+        current_account = load_current_account(api_url)
+        overview, trends, performance = load_dashboard_data(api_url, selected_weeks)
+    except DashboardAuthenticationError:
+        loading_placeholder.empty()
+        clear_authenticated_session()
+        st.error("Your session expired. Sign in again.")
+        render_login(api_url)
+        return
+    except (DashboardApiError, ValidationError, ValueError):
+        loading_placeholder.empty()
+        st.title("RunCoach AI")
+        st.error("We couldn't load your dashboard. Check the service and try again.")
+        if st.button("Try again", type="primary"):
+            st.rerun()
+        return
+    loading_placeholder.empty()
 
     st.title("RunCoach AI")
     st.caption(
@@ -1326,9 +1364,9 @@ def main() -> None:
             "Training history",
             min_value=4,
             max_value=52,
-            value=12,
             step=4,
             format="%d weeks",
+            key=HISTORY_WEEKS_KEY,
         )
 
         if st.button("Refresh calculated data", use_container_width=True):
@@ -1383,13 +1421,6 @@ def main() -> None:
             "The dashboard reads calculated aggregates through FastAPI. "
             "It does not access raw activity files or PostgreSQL directly."
         )
-
-    try:
-        overview, trends, performance = load_dashboard_data(api_url, selected_weeks)
-    except (DashboardApiError, ValidationError, ValueError) as error:
-        st.error("Dashboard data could not be loaded.")
-        st.caption(str(error))
-        st.stop()
 
     stale_days = (overview.as_of_date - overview.data_end_date).days
 

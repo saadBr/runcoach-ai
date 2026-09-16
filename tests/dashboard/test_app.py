@@ -15,9 +15,12 @@ from streamlit.testing.v1 import AppTest
 from runcoach.dashboard.app import (
     COACH_MESSAGES_KEY,
     COACH_SESSION_OWNER_KEY,
+    DEFAULT_HISTORY_WEEKS,
+    HISTORY_WEEKS_KEY,
     SESSION_TOKEN_KEY,
     bind_private_state_to_session,
     daily_workload_frame,
+    dashboard_history_weeks,
     format_duration,
     format_optional,
     format_pace,
@@ -53,6 +56,13 @@ CURRENT_ACCOUNT_PAYLOAD = {
         "onboarding_status": "ready",
     },
     "session_expires_at": "2026-10-07T12:00:00Z",
+}
+
+LOGIN_PAYLOAD = {
+    "access_token": TEST_ACCESS_TOKEN,
+    "token_type": "bearer",
+    "expires_at": "2026-10-07T12:00:00Z",
+    "athlete": CURRENT_ACCOUNT_PAYLOAD["athlete"],
 }
 
 WORKLOAD_PAYLOAD = {
@@ -481,6 +491,9 @@ class StubAnalyticsHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         request_url = urlsplit(self.path)
+        if request_url.path == "/api/v1/auth/login":
+            self._respond(LOGIN_PAYLOAD)
+            return
         if request_url.path == "/api/v1/auth/logout":
             if not self._authorized():
                 return
@@ -561,6 +574,67 @@ def test_dashboard_requires_login_before_loading_private_data(
     assert not app.metric
 
 
+def test_successful_login_replaces_authentication_ui_with_ready_dashboard(
+    dashboard_api: None,
+) -> None:
+    app = AppTest.from_file(APP_PATH, default_timeout=30).run()
+    email = next(field for field in app.text_input if field.label == "Email")
+    password = next(field for field in app.text_input if field.label == "Password")
+    email.set_value("athlete@example.test")
+    password.set_value("correct horse battery staple")
+    sign_in = next(button for button in app.button if button.label == "Sign in")
+
+    app = sign_in.click().run()
+
+    assert dashboard_api is None
+    assert not app.exception
+    assert app.session_state[SESSION_TOKEN_KEY] == TEST_ACCESS_TOKEN
+    assert [tab.label for tab in app.tabs] == [
+        "Training volume",
+        "Performance",
+        "Coach",
+        "Training plan",
+        "Workload and form",
+        "Data coverage",
+    ]
+    assert "Email" not in [field.label for field in app.text_input]
+    assert "Signed in as Synthetic Athlete" in [message.value for message in app.success]
+    assert "Loading your dashboard..." not in str(app)
+
+
+def test_invalid_session_returns_to_login_without_private_controls(
+    dashboard_api: None,
+) -> None:
+    app = AppTest.from_file(APP_PATH, default_timeout=30).run()
+    app.session_state[SESSION_TOKEN_KEY] = "invalid-session-token-with-sufficient-length"
+
+    app = app.run()
+
+    assert dashboard_api is None
+    assert SESSION_TOKEN_KEY not in app.session_state
+    assert [tab.label for tab in app.tabs] == ["Sign in", "Create account"]
+    assert "Your session expired. Sign in again." in [message.value for message in app.error]
+    assert "Dashboard controls" not in [header.value for header in app.header]
+
+
+def test_dashboard_load_failure_shows_retry_without_private_controls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("RUNCOACH_API_URL", "http://127.0.0.1:1")
+    app = AppTest.from_file(APP_PATH, default_timeout=30).run()
+    app.session_state[SESSION_TOKEN_KEY] = TEST_ACCESS_TOKEN
+
+    app = app.run()
+
+    assert not app.exception
+    assert "We couldn't load your dashboard. Check the service and try again." in [
+        message.value for message in app.error
+    ]
+    assert "Try again" in [button.label for button in app.button]
+    assert "Dashboard controls" not in [header.value for header in app.header]
+    assert not app.metric
+
+
 def test_dashboard_renders_validated_analytics(
     dashboard_api: None,
 ) -> None:
@@ -637,6 +711,20 @@ def test_history_slider_reruns_dashboard(
     sliders = {slider.label: slider.value for slider in app.slider}
     assert sliders["Training history"] == 4
     assert app.metric[1].value == "1,376.1 km"
+
+
+def test_history_window_is_initialized_before_sidebar_rendering() -> None:
+    state: dict[str, object] = {}
+
+    assert dashboard_history_weeks(state) == DEFAULT_HISTORY_WEEKS
+    assert state[HISTORY_WEEKS_KEY] == DEFAULT_HISTORY_WEEKS
+
+    state[HISTORY_WEEKS_KEY] = 20
+    assert dashboard_history_weeks(state) == 20
+
+    state[HISTORY_WEEKS_KEY] = "invalid"
+    assert dashboard_history_weeks(state) == DEFAULT_HISTORY_WEEKS
+    assert state[HISTORY_WEEKS_KEY] == DEFAULT_HISTORY_WEEKS
 
 
 def test_training_plan_can_be_persisted_from_dashboard(dashboard_api: None) -> None:

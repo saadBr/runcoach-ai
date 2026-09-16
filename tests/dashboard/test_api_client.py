@@ -12,7 +12,11 @@ from urllib.request import Request
 import pytest
 
 from runcoach.dashboard import api_client
-from runcoach.dashboard.api_client import DashboardApiError, RunCoachApiClient
+from runcoach.dashboard.api_client import (
+    DashboardApiError,
+    DashboardAuthenticationError,
+    RunCoachApiClient,
+)
 
 
 class FakeResponse:
@@ -518,6 +522,28 @@ def test_client_translates_http_errors(
 
     with pytest.raises(DashboardApiError, match="HTTP 503"):
         RunCoachApiClient("http://localhost:8000").get_overview()
+
+
+def test_client_distinguishes_rejected_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_urlopen(request: Request, timeout: float) -> Never:
+        del timeout
+        raise HTTPError(
+            request.full_url,
+            401,
+            "Unauthorized",
+            hdrs=Message(),
+            fp=BytesIO(b'{"detail":"Authentication is required."}'),
+        )
+
+    monkeypatch.setattr(api_client, "urlopen", fake_urlopen)
+
+    with pytest.raises(DashboardAuthenticationError, match="Authentication is required"):
+        RunCoachApiClient(
+            "http://localhost:8000",
+            access_token="opaque-session-token-with-sufficient-length",
+        ).get_current_account()
 
 
 @pytest.mark.parametrize(
