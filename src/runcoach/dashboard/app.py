@@ -778,6 +778,8 @@ def render_sensor_coverage(overview: AnalyticsOverview) -> None:
 def render_performance(performance: PerformanceOverview, api_url: str) -> None:
     """Render verified PB evidence and experimental current-fitness estimates."""
 
+    del api_url
+
     st.subheader("Verified personal bests")
     record_columns = st.columns(len(performance.personal_bests))
 
@@ -796,29 +798,19 @@ def render_performance(performance: PerformanceOverview, api_url: str) -> None:
         )
 
     st.subheader("Training-informed race prediction")
-    st.warning(
-        "Fitness potential estimates what current ability could support on a flat course in "
-        "good conditions. Race readiness also accounts for distance-specific preparation. "
-        "Both remain experimental until chronological validation is complete."
+    st.info(
+        "Predictions combine your best performances with recent training. Use the readiness "
+        "range as a realistic race-day guide rather than treating one time as a guarantee."
     )
     fitness = performance.current_fitness
-    status, anchor, evidence = st.columns(3)
-    status.metric(
-        "Model status",
-        (
-            "Experimental"
-            if performance.prediction_status == "experimental_not_validated"
-            else performance.prediction_status.replace("_", " ").title()
-        ),
-    )
-    if performance.prediction_status == "experimental_not_validated":
-        status.caption("Chronological validation pending")
+    anchor, evidence, latest_data = st.columns(3)
     anchor.metric(
-        "Current anchor",
+        "Latest performance marker",
         f"{distance_label(fitness.anchor.distance)} · "
         f"{format_duration(fitness.anchor.elapsed_time_seconds)}",
     )
     evidence.metric("Training history", f"{fitness.training.runs_365d} runs / 365 days")
+    latest_data.metric("Training considered through", fitness.as_of_date.isoformat())
 
     estimates = pd.DataFrame.from_records(
         [
@@ -867,7 +859,7 @@ def render_performance(performance: PerformanceOverview, api_url: str) -> None:
             st.info("No representative performance evidence is available yet.")
 
     st.caption(
-        f"Evidence through {fitness.as_of_date.isoformat()}: "
+        f"Recent training: "
         f"{fitness.training.distance_28d_km:.1f} km / 28 days, "
         f"{fitness.training.distance_84d_km:.1f} km / 84 days, "
         f"{fitness.training.distance_168d_km:.1f} km / 168 days, and "
@@ -876,33 +868,12 @@ def render_performance(performance: PerformanceOverview, api_url: str) -> None:
         f"{format_optional(fitness.training.longest_run_84d_km)} km."
     )
     st.caption(
-        "OpenAI's role is to explain a validated model's evidence, uncertainty, and practical "
-        "meaning. Numeric race times remain the output of versioned, tested code."
+        "Personal bests are athlete-confirmed. Faster imported efforts may appear as supporting "
+        "evidence until you confirm them."
     )
     st.caption(
-        "Verified PB cards remain athlete-confirmed. Best available evidence may be a faster "
-        "provisional effort derived from imported Strava trackpoints."
+        "Race-day results can still vary with weather, terrain, sleep, health, taper, and pacing."
     )
-    st.info(" ".join(performance.limitations))
-    with st.expander("View performance calculation provenance"):
-        st.code(
-            "\n".join(
-                [f"Prediction status: {performance.prediction_status}"]
-                + [f"Algorithm: {performance.prediction_method}"]
-                + [f"Evidence date: {fitness.as_of_date.isoformat()}"]
-                + [f"Anchor capacity factor: {fitness.anchor_capacity_factor:.6f}"]
-                + [f"Anchor improvement factor: {fitness.anchor_improvement_factor:.6f}"]
-                + [f"Anchor session: {fitness.anchor.session_kind.value}"]
-                + [f"Interpretation role: {performance.interpretation_role}"]
-                + [
-                    f"{distance_label(personal_best.distance)} PB evidence: "
-                    f"{personal_best.personal_best_id} ({personal_best.algorithm_version})"
-                    for personal_best in performance.personal_bests
-                ]
-            ),
-            language="text",
-        )
-    render_performance_label_audit(api_url)
 
 
 def render_performance_label_audit(api_url: str) -> None:
@@ -1118,9 +1089,8 @@ def render_plan_tracking(tracking: ActivePlanTracking) -> None:
     """Render plan-to-actual progress and explain versioned adaptations."""
 
     st.markdown("#### Active plan tracking")
-    status_column, version_column, weeks_column, adherence_column = st.columns(4)
+    status_column, weeks_column, adherence_column = st.columns(3)
     status_column.metric("Plan status", tracking.status.replace("_", " ").title())
-    version_column.metric("Active version", f"v{tracking.active_version}")
     weeks_column.metric(
         "Completed weeks",
         f"{tracking.completed_weeks} / {tracking.total_weeks}",
@@ -1186,34 +1156,32 @@ def render_plan_tracking(tracking: ActivePlanTracking) -> None:
     )
     st.dataframe(progress_table, hide_index=True, width="stretch")
 
-    st.markdown("#### Adaptation history")
-    chronological_versions = sorted(tracking.versions, key=lambda version: version.version)
-    previous_weekly_km: float | None = None
-    version_records: list[dict[str, object]] = []
-    for version in chronological_versions:
-        change = (
-            None
-            if previous_weekly_km is None
-            else version.recent_weekly_distance_km - previous_weekly_km
+    with st.expander("See how your plan has adapted"):
+        chronological_versions = sorted(tracking.versions, key=lambda version: version.version)
+        previous_weekly_km: float | None = None
+        version_records: list[dict[str, object]] = []
+        for version in chronological_versions:
+            change = (
+                None
+                if previous_weekly_km is None
+                else version.recent_weekly_distance_km - previous_weekly_km
+            )
+            version_records.append(
+                {
+                    "Updated through": version.evidence_as_of_date,
+                    "Recent weekly distance": f"{version.recent_weekly_distance_km:.1f} km",
+                    "Change": "First plan" if change is None else f"{change:+.1f} km",
+                    "Opening week": f"{version.first_week_target_km:.1f} km",
+                    "Peak week": f"{version.peak_week_target_km:.1f} km",
+                    "Longest run": f"{version.peak_long_run_km:.1f} km",
+                }
+            )
+            previous_weekly_km = version.recent_weekly_distance_km
+        st.dataframe(
+            pd.DataFrame.from_records(reversed(version_records)),
+            hide_index=True,
+            width="stretch",
         )
-        version_records.append(
-            {
-                "Version": f"v{version.version}",
-                "Status": version.status.title(),
-                "Evidence through": version.evidence_as_of_date,
-                "Recent weekly volume": f"{version.recent_weekly_distance_km:.1f} km",
-                "Evidence change": "Initial" if change is None else f"{change:+.1f} km",
-                "First week": f"{version.first_week_target_km:.1f} km",
-                "Peak week": f"{version.peak_week_target_km:.1f} km",
-                "Peak long run": f"{version.peak_long_run_km:.1f} km",
-            }
-        )
-        previous_weekly_km = version.recent_weekly_distance_km
-    st.dataframe(
-        pd.DataFrame.from_records(reversed(version_records)),
-        hide_index=True,
-        width="stretch",
-    )
 
 
 def render_conversational_coach(api_url: str) -> None:
@@ -1356,9 +1324,7 @@ def main() -> None:
     loading_placeholder.empty()
 
     st.title("RunCoach AI")
-    st.caption(
-        "Evidence-backed running analytics calculated by deterministic, versioned pipelines."
-    )
+    st.caption("Personalized performance insights and training guidance from your running history.")
 
     with st.sidebar:
         st.header("Dashboard controls")
@@ -1378,11 +1344,11 @@ def main() -> None:
             key=HISTORY_WEEKS_KEY,
         )
 
-        if st.button("Refresh calculated data", use_container_width=True):
+        if st.button("Refresh dashboard", use_container_width=True):
             st.rerun()
 
         st.divider()
-        st.subheader("Add a Strava run")
+        st.subheader("Add a run")
         uploaded_run = st.file_uploader(
             "FIT activity",
             type=["fit", "gz"],
@@ -1424,12 +1390,6 @@ def main() -> None:
                 except (DashboardApiError, ValidationError, ValueError) as error:
                     st.error("The run could not be imported.")
                     st.caption(str(error))
-
-        st.divider()
-        st.caption(
-            "The dashboard reads calculated aggregates through FastAPI. "
-            "It does not access raw activity files or PostgreSQL directly."
-        )
 
     stale_days = (overview.as_of_date - overview.data_end_date).days
 
@@ -1477,7 +1437,7 @@ def main() -> None:
 
     with volume_tab:
         render_weekly_volume(weekly_data)
-        with st.expander("View weekly evidence table"):
+        with st.expander("View weekly details"):
             render_weekly_table(weekly_data)
 
     with performance_tab:
@@ -1600,16 +1560,24 @@ def main() -> None:
                 active_plan = persisted
                 plan = persisted.preview
                 plan_is_active = True
-                action = "created" if persisted.created else "reused"
-                st.success(f"Active plan v{persisted.version} {action} and saved.")
+                message = (
+                    "Your active plan was created and saved."
+                    if persisted.created
+                    else "Your active plan already matches these settings."
+                )
+                st.success(message)
             elif refresh_selected:
                 with st.spinner("Updating your plan from the latest training..."):
                     persisted = refresh_active_training_plan(api_url)
                 active_plan = persisted
                 plan = persisted.preview
                 plan_is_active = True
-                action = "created" if persisted.created else "already current"
-                st.success(f"Active plan v{persisted.version}: {action}.")
+                message = (
+                    "Your plan was updated from your latest training."
+                    if persisted.created
+                    else "Your plan is already up to date."
+                )
+                st.success(message)
             else:
                 selected_active_goal = active_plan.preview.goal if active_plan is not None else None
                 target_matches = selected_active_goal is not None and (
@@ -1662,17 +1630,6 @@ def main() -> None:
 
     with quality_tab:
         render_sensor_coverage(overview)
-        st.subheader("Calculation provenance")
-        st.code(
-            "\n".join(
-                [
-                    f"Load method: {overview.workload.load_method}",
-                    (f"Daily workload algorithm: {overview.workload.algorithm_version}"),
-                    (f"Workload coverage: {overview.workload.coverage_pct:.1f}%"),
-                ]
-            ),
-            language="text",
-        )
 
     st.divider()
     st.caption(

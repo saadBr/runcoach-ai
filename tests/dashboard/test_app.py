@@ -713,14 +713,15 @@ def test_dashboard_renders_validated_analytics(
         "Data coverage",
     ]
     assert "5K" in [metric.label for metric in app.metric]
-    assert "Model status" in [metric.label for metric in app.metric]
-    assert "Current anchor" in [metric.label for metric in app.metric]
+    assert "Model status" not in [metric.label for metric in app.metric]
+    assert "Latest performance marker" in [metric.label for metric in app.metric]
     assert "Training history" in [metric.label for metric in app.metric]
-    assert "Reviewed" in [metric.label for metric in app.metric]
-    assert "Verified efforts" in [metric.label for metric in app.metric]
-    assert "Chronological targets" in [metric.label for metric in app.metric]
+    assert "Training considered through" in [metric.label for metric in app.metric]
+    assert "Reviewed" not in [metric.label for metric in app.metric]
+    assert "Verified efforts" not in [metric.label for metric in app.metric]
+    assert "Chronological targets" not in [metric.label for metric in app.metric]
     assert "Goal assessment" in [metric.label for metric in app.metric]
-    assert "Active version" in [metric.label for metric in app.metric]
+    assert "Active version" not in [metric.label for metric in app.metric]
     assert "Distance adherence" in [metric.label for metric in app.metric]
     assert app.selectbox[0].value == "10k"
     race_date_input = next(widget for widget in app.date_input if widget.label == "Race date")
@@ -731,6 +732,13 @@ def test_dashboard_renders_validated_analytics(
     assert sliders["Running days per week"] == 5
     assert "Active training plan" in [heading.value for heading in app.subheader]
     assert "View plan provenance" not in [expander.label for expander in app.expander]
+    assert "View performance calculation provenance" not in [
+        expander.label for expander in app.expander
+    ]
+    assert "See how your plan has adapted" in [expander.label for expander in app.expander]
+    assert "Calculation provenance" not in [heading.value for heading in app.subheader]
+    assert "Refresh dashboard" in [button.label for button in app.button]
+    assert "Refresh calculated data" not in [button.label for button in app.button]
 
 
 def test_sign_out_clears_token_and_private_coach_history(
@@ -827,7 +835,7 @@ def test_training_plan_can_be_persisted_from_dashboard(dashboard_api: None) -> N
 
     assert dashboard_api is None
     assert not app.exception
-    assert "Active plan v1 created and saved." in [message.value for message in app.success]
+    assert "Your active plan was created and saved." in [message.value for message in app.success]
 
 
 def test_browser_refresh_only_reads_existing_plan(dashboard_api: None) -> None:
