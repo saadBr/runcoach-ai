@@ -1203,9 +1203,7 @@ def render_conversational_coach(api_url: str) -> None:
 
     st.subheader("Ask RunCoach")
     st.caption(
-        "Ask about current fitness, your marathon goal, workload, plan adherence, or the next "
-        "session. Calculations stay in versioned RunCoach code; the language model only explains "
-        "the resulting evidence."
+        "Ask about your current fitness, race goal, recent training, recovery, or what to run next."
     )
     if st.button("Clear coach conversation", key="clear_coach_conversation"):
         st.session_state[COACH_MESSAGES_KEY] = []
@@ -1218,12 +1216,9 @@ def render_conversational_coach(api_url: str) -> None:
             {
                 "role": "assistant",
                 "content": (
-                    "Ask me what to run next, whether your marathon target is supported, how your "
-                    "current fitness is trending, or what the latest workload means."
+                    "How can I help with your training today? You can ask about your next run, "
+                    "current fitness, race goal, or recent workload."
                 ),
-                "evidence_ids": (),
-                "limitations": (),
-                "mode": "deterministic",
             }
         ]
         st.session_state[COACH_MESSAGES_KEY] = history
@@ -1232,54 +1227,49 @@ def render_conversational_coach(api_url: str) -> None:
         role = str(message.get("role", "assistant"))
         with st.chat_message(role):
             st.markdown(str(message.get("content", "")))
-            evidence_ids = message.get("evidence_ids", ())
-            if isinstance(evidence_ids, (list, tuple)) and evidence_ids:
-                st.caption("Evidence: " + ", ".join(str(item) for item in evidence_ids))
-                response_mode = str(message.get("mode", "deterministic"))
-                mode_label = (
-                    "OpenAI explanation over RunCoach evidence"
-                    if response_mode == "openai"
-                    else "Deterministic RunCoach fallback"
-                )
-                st.caption(f"Mode: {mode_label}")
-            limitations = message.get("limitations", ())
-            if isinstance(limitations, (list, tuple)) and limitations:
-                with st.expander("Limitations"):
-                    for limitation in limitations:
-                        st.write(f"- {limitation}")
 
-    question = st.chat_input("Ask about your running and active plan")
-    if question:
-        prior_turns = [
-            {"role": str(item["role"]), "content": str(item["content"])}
-            for item in history
-            if item.get("role") in {"user", "assistant"} and item.get("content")
-        ][-8:]
-        try:
-            reply = ask_coach(
-                api_url,
-                message=question,
-                conversation=prior_turns,
-            )
-        except (DashboardApiError, ValidationError, ValueError) as error:
-            st.error("RunCoach could not answer this question.")
-            st.caption(str(error))
-            return
+    composer = st.empty()
+    question = composer.chat_input("Ask about your running and active plan")
+    if not question:
+        return
 
-        history.extend(
-            (
-                {"role": "user", "content": question},
-                {
-                    "role": "assistant",
-                    "content": reply.answer,
-                    "evidence_ids": reply.evidence_ids,
-                    "limitations": reply.limitations,
-                    "mode": reply.mode,
-                },
-            )
+    composer.empty()
+    prior_turns = [
+        {"role": str(item["role"]), "content": str(item["content"])}
+        for item in history
+        if item.get("role") in {"user", "assistant"} and item.get("content")
+    ][-8:]
+    history.append({"role": "user", "content": question})
+    st.session_state[COACH_MESSAGES_KEY] = history[-17:]
+    with st.chat_message("user"):
+        st.markdown(question)
+
+    with st.chat_message("assistant"):
+        st.status("Thinking...", expanded=False)
+    st.chat_input(
+        "RunCoach is thinking...",
+        disabled=True,
+        key="coach_pending_input",
+    )
+
+    try:
+        reply = ask_coach(
+            api_url,
+            message=question,
+            conversation=prior_turns,
         )
+    except (DashboardApiError, ValidationError, ValueError):
+        error_message = (
+            "I couldn't answer that right now. Your question is still here, so please try "
+            "again in a moment."
+        )
+        history.append({"role": "assistant", "content": error_message})
         st.session_state[COACH_MESSAGES_KEY] = history[-17:]
         st.rerun()
+
+    history.append({"role": "assistant", "content": reply.answer})
+    st.session_state[COACH_MESSAGES_KEY] = history[-17:]
+    st.rerun()
 
 
 def main() -> None:

@@ -437,9 +437,24 @@ PLAN_TRACKING_PAYLOAD = {
     ],
 }
 
+COACH_REPLY_PAYLOAD = {
+    "answer": (
+        "Keep tomorrow easy. Your recent workload is already high, so another hard session "
+        "would add fatigue without much benefit before the next quality workout."
+    ),
+    "evidence_ids": ["workload:2026-08-27", "plan:next-session:1"],
+    "limitations": ["Sleep and soreness are not available."],
+    "mode": "openai",
+    "model": "gpt-test",
+    "context_version": "coaching_context_v2",
+    "prompt_version": "evidence_coach_v4",
+}
+
 
 class StubAnalyticsHandler(BaseHTTPRequestHandler):
     """Serve deterministic aggregate responses to the dashboard test."""
+
+    chat_status = 200
 
     def do_GET(self) -> None:
         request_url = urlsplit(self.path)
@@ -508,6 +523,12 @@ class StubAnalyticsHandler(BaseHTTPRequestHandler):
         }:
             self._respond(PERSISTED_TRAINING_PLAN_PAYLOAD)
             return
+        if request_url.path == "/api/v1/coaching/chat":
+            if self.chat_status == 200:
+                self._respond(COACH_REPLY_PAYLOAD)
+            else:
+                self._respond({"detail": "Temporary provider failure."}, status=self.chat_status)
+            return
         self._respond({"detail": "Not found"}, status=404)
 
     def _authorized(self) -> bool:
@@ -534,6 +555,7 @@ def dashboard_api(
 ) -> Generator[None, None, None]:
     """Run an isolated local aggregate API for one dashboard test."""
 
+    StubAnalyticsHandler.chat_status = 200
     server = ThreadingHTTPServer(("127.0.0.1", 0), StubAnalyticsHandler)
     server_thread = Thread(target=server.serve_forever, daemon=True)
     server_thread.start()
@@ -725,6 +747,45 @@ def test_history_window_is_initialized_before_sidebar_rendering() -> None:
     state[HISTORY_WEEKS_KEY] = "invalid"
     assert dashboard_history_weeks(state) == DEFAULT_HISTORY_WEEKS
     assert state[HISTORY_WEEKS_KEY] == DEFAULT_HISTORY_WEEKS
+
+
+def test_coach_keeps_question_visible_and_hides_internal_metadata(
+    dashboard_api: None,
+) -> None:
+    app = _authenticated_dashboard()
+
+    app = app.chat_input[0].set_value("Should I run hard tomorrow?").run()
+
+    assert dashboard_api is None
+    assert not app.exception
+    history = app.session_state[COACH_MESSAGES_KEY]
+    assert history[-2] == {"role": "user", "content": "Should I run hard tomorrow?"}
+    assert history[-1] == {
+        "role": "assistant",
+        "content": COACH_REPLY_PAYLOAD["answer"],
+    }
+    rendered_markdown = [element.value for element in app.markdown]
+    assert "Should I run hard tomorrow?" in rendered_markdown
+    assert COACH_REPLY_PAYLOAD["answer"] in rendered_markdown
+    rendered_captions = [element.value for element in app.caption]
+    assert not any(value.startswith("Evidence:") for value in rendered_captions)
+    assert not any(value.startswith("Mode:") for value in rendered_captions)
+    assert "plan:next-session:1" not in str(history)
+
+
+def test_coach_retains_question_when_api_fails(dashboard_api: None) -> None:
+    StubAnalyticsHandler.chat_status = 503
+    app = _authenticated_dashboard()
+
+    app = app.chat_input[0].set_value("Can you review today's run?").run()
+
+    assert dashboard_api is None
+    assert not app.exception
+    history = app.session_state[COACH_MESSAGES_KEY]
+    assert history[-2] == {"role": "user", "content": "Can you review today's run?"}
+    assert history[-1]["role"] == "assistant"
+    assert "please try again" in str(history[-1]["content"])
+    assert "Temporary provider failure" not in str(app)
 
 
 def test_training_plan_can_be_persisted_from_dashboard(dashboard_api: None) -> None:

@@ -396,7 +396,10 @@ def test_openai_adapter_requests_stateless_structured_output() -> None:
     assert transport.payload["model"] == "gpt-test"
     assert transport.payload["store"] is False
     instructions = str(transport.payload["instructions"])
-    assert "directly answers the exact question" in instructions
+    assert "directly answers the athlete's exact question" in instructions
+    assert "practical advice" in instructions
+    assert "natural plain English" in instructions
+    assert "never mention evidence IDs" in instructions
     assert "Do not begin by reciting the active plan" in instructions
     assert "'tomorrow' is exactly one calendar day later" in instructions
     text = transport.payload["text"]
