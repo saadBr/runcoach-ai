@@ -25,6 +25,13 @@ from runcoach.analytics.performance import (
     calculate_fastest_rolling_distance_effort,
     standard_distance_meters,
 )
+from runcoach.analytics.performance_evidence import (
+    PERFORMANCE_EVIDENCE_VERSION,
+    ActivityPerformanceCandidate,
+    PerformanceEvidenceKind,
+    SelectedPerformanceEvidence,
+    select_activity_performance_evidence,
+)
 from runcoach.analytics.session_classification import classify_session
 from runcoach.db.models import Activity, Athlete, PersonalBest, Trackpoint
 
@@ -34,8 +41,6 @@ DISTANCE_BY_METERS = {
     Decimal("21097.500"): StandardDistance.HALF_MARATHON,
     Decimal("42195.000"): StandardDistance.MARATHON,
 }
-
-OBSERVED_EFFORT_CANDIDATES_PER_DISTANCE = 24
 
 
 class PerformanceQueryError(RuntimeError):
@@ -70,6 +75,8 @@ class PerformanceOverview:
     verified_labels: int
     interpretation_role: str
     limitations: tuple[str, ...]
+    evidence_selection_version: str = PERFORMANCE_EVIDENCE_VERSION
+    performance_evidence: tuple[SelectedPerformanceEvidence, ...] = ()
 
 
 def _standard_distance(distance_m: Decimal) -> StandardDistance:
@@ -160,20 +167,10 @@ def _observed_best_effort_marks(
     for distance in StandardDistance:
         target_m = standard_distance_meters(distance)
         candidates = tuple(
-            sorted(
-                (
-                    activity
-                    for activity in activities
-                    if float(activity.distance_m)
-                    >= target_m * (1 - DEFAULT_DISTANCE_TOLERANCE_PCT / 100)
-                    and activity.elapsed_time_ms > 0
-                ),
-                key=lambda activity: (
-                    activity.elapsed_time_ms / max(float(activity.distance_m), 1.0),
-                    -activity.local_start_date.toordinal(),
-                    str(activity.id),
-                ),
-            )[:OBSERVED_EFFORT_CANDIDATES_PER_DISTANCE]
+            activity
+            for activity in activities
+            if float(activity.distance_m) >= target_m * (1 - DEFAULT_DISTANCE_TOLERANCE_PCT / 100)
+            and activity.elapsed_time_ms > 0
         )
         if candidates:
             candidates_by_distance[distance] = candidates
@@ -326,6 +323,71 @@ class PerformanceQueryService:
 
         activity_by_id = {activity.id: activity for activity in activities}
 
+        verified_evidence: list[SelectedPerformanceEvidence] = []
+        active_record_ids = {record.id for record in records}
+        for record in all_records:
+            activity = activity_by_id.get(record.activity_id)
+            if activity is None:
+                continue
+            distance = _standard_distance(record.distance_m)
+            elapsed_time_seconds = record.elapsed_time_ms / 1_000
+            verified_evidence.append(
+                SelectedPerformanceEvidence(
+                    activity_id=activity.id,
+                    activity_name=activity.name,
+                    achieved_on=_utc_datetime(record.achieved_at).date(),
+                    evidence_kind=(
+                        PerformanceEvidenceKind.VERIFIED_PERSONAL_BEST
+                        if record.id in active_record_ids
+                        else PerformanceEvidenceKind.VERIFIED_HISTORY
+                    ),
+                    target_distance=distance,
+                    activity_distance_km=round(float(activity.distance_m) / 1_000, 6),
+                    elapsed_time_seconds=round(elapsed_time_seconds, 3),
+                    pace_seconds_per_km=round(
+                        elapsed_time_seconds / (standard_distance_meters(distance) / 1_000),
+                        6,
+                    ),
+                    session_kind=classify_session(activity.name).primary_kind,
+                    reason=(
+                        "Athlete-confirmed active personal best at this standard distance."
+                        if record.id in active_record_ids
+                        else "Athlete-confirmed historical performance retained for progression."
+                    ),
+                )
+            )
+
+        activity_evidence = select_activity_performance_evidence(
+            tuple(
+                ActivityPerformanceCandidate(
+                    activity_id=activity.id,
+                    name=activity.name,
+                    achieved_on=activity.local_start_date,
+                    distance_km=float(activity.distance_m) / 1_000,
+                    moving_time_seconds=activity.moving_time_ms / 1_000,
+                    elapsed_time_seconds=activity.elapsed_time_ms / 1_000,
+                    activity_type=activity.activity_type,
+                    session_kind=classify_session(activity.name).primary_kind,
+                )
+                for activity in activities
+                if activity.distance_m > 0
+                and activity.moving_time_ms > 0
+                and activity.elapsed_time_ms > 0
+            ),
+            already_verified_activity_ids=frozenset(record.activity_id for record in all_records),
+        )
+        performance_evidence = tuple(
+            sorted(
+                (*verified_evidence, *activity_evidence),
+                key=lambda item: (
+                    item.achieved_on,
+                    item.evidence_kind,
+                    str(item.activity_id),
+                ),
+                reverse=True,
+            )
+        )
+
         def fitness_mark(record: PersonalBest) -> FitnessMark:
             activity = activity_by_id.get(record.activity_id)
             if activity is None:
@@ -408,4 +470,6 @@ class PerformanceQueryService:
             verified_labels=len(summaries),
             interpretation_role="openai_explains_validated_outputs_only",
             limitations=current_fitness.limitations,
+            evidence_selection_version=PERFORMANCE_EVIDENCE_VERSION,
+            performance_evidence=performance_evidence,
         )

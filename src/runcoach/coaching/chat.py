@@ -253,6 +253,41 @@ class DatabaseCoachingContextLoader:
                 )
             )
 
+        active_pb_activity_ids = {
+            activity_id
+            for personal_best in performance.personal_bests
+            if (activity_id := getattr(personal_best, "activity_id", None)) is not None
+        }
+        for selected in getattr(performance, "performance_evidence", ()):
+            if selected.activity_id in active_pb_activity_ids:
+                continue
+            evidence.append(
+                EvidenceItem(
+                    evidence_id=f"performance:{selected.activity_id}",
+                    category="performance",
+                    summary=(
+                        f"{selected.achieved_on.isoformat()} "
+                        f"{selected.activity_name or 'run'} covered "
+                        f"{selected.activity_distance_km:.1f} km at "
+                        f"{_pace(selected.pace_seconds_per_km)}; "
+                        f"selected as {selected.evidence_kind.value.replace('_', ' ')}."
+                    ),
+                    facts={
+                        "achieved_on": selected.achieved_on.isoformat(),
+                        "activity_name": selected.activity_name,
+                        "activity_distance_km": selected.activity_distance_km,
+                        "pace_seconds_per_km": selected.pace_seconds_per_km,
+                        "evidence_kind": selected.evidence_kind.value,
+                        "target_distance": (
+                            selected.target_distance.value
+                            if selected.target_distance is not None
+                            else None
+                        ),
+                        "selection_reason": selected.reason,
+                    },
+                )
+            )
+
         for estimate in performance.current_fitness.estimates:
             evidence.append(
                 EvidenceItem(

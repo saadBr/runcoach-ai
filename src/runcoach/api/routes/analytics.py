@@ -14,6 +14,7 @@ from runcoach.analytics.performance import (
     PerformanceLabel,
     StandardDistance,
 )
+from runcoach.analytics.performance_evidence import PerformanceEvidenceKind
 from runcoach.analytics.performance_label_audit import (
     LabelAuditError,
     LabelReviewDecision,
@@ -232,6 +233,23 @@ class CurrentFitnessResponse(BaseModel):
     limitations: tuple[str, ...]
 
 
+class SelectedPerformanceEvidenceResponse(BaseModel):
+    """One representative performance retained by deterministic selection."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    activity_id: UUID
+    activity_name: str | None
+    achieved_on: date
+    evidence_kind: PerformanceEvidenceKind
+    target_distance: StandardDistance | None
+    activity_distance_km: float
+    elapsed_time_seconds: float
+    pace_seconds_per_km: float
+    session_kind: SessionKind
+    reason: str
+
+
 class PerformanceOverviewResponse(BaseModel):
     """Verified personal bests and an experimental current-fitness estimate."""
 
@@ -244,6 +262,8 @@ class PerformanceOverviewResponse(BaseModel):
     verified_labels: int
     interpretation_role: str
     limitations: tuple[str, ...]
+    evidence_selection_version: str = "representative_performance_evidence_v1"
+    performance_evidence: tuple[SelectedPerformanceEvidenceResponse, ...] = ()
 
 
 class PerformanceLabelCandidateResponse(BaseModel):

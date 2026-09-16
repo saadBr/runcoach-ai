@@ -11,6 +11,7 @@ from runcoach.analytics.performance import (
     PerformanceLabel,
     StandardDistance,
 )
+from runcoach.analytics.performance_evidence import PerformanceEvidenceKind
 from runcoach.analytics.performance_label_audit import LabelReviewStatus
 from runcoach.analytics.session_classification import SessionKind
 from runcoach.analytics.training_plan import (
@@ -213,6 +214,21 @@ class CurrentFitness(DashboardSchema):
     limitations: tuple[str, ...] = Field(min_length=1)
 
 
+class SelectedPerformanceEvidence(DashboardSchema):
+    """One representative race or training performance used as evidence."""
+
+    activity_id: UUID
+    activity_name: str | None
+    achieved_on: date
+    evidence_kind: PerformanceEvidenceKind
+    target_distance: StandardDistance | None
+    activity_distance_km: float = Field(gt=0)
+    elapsed_time_seconds: float = Field(gt=0)
+    pace_seconds_per_km: float = Field(gt=0)
+    session_kind: SessionKind
+    reason: str = Field(min_length=1)
+
+
 class PerformanceOverview(DashboardSchema):
     """Verified personal-best and current-fitness response."""
 
@@ -223,6 +239,8 @@ class PerformanceOverview(DashboardSchema):
     verified_labels: int = Field(ge=0)
     interpretation_role: str = Field(min_length=1)
     limitations: tuple[str, ...] = Field(min_length=1)
+    evidence_selection_version: str = "representative_performance_evidence_v1"
+    performance_evidence: tuple[SelectedPerformanceEvidence, ...] = ()
 
 
 class PerformanceLabelCandidate(DashboardSchema):

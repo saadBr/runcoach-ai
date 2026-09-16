@@ -844,6 +844,28 @@ def render_performance(performance: PerformanceOverview, api_url: str) -> None:
     )
     st.dataframe(estimates, hide_index=True, width="stretch")
 
+    with st.expander("What informs these estimates"):
+        if performance.performance_evidence:
+            st.dataframe(
+                pd.DataFrame.from_records(
+                    [
+                        {
+                            "Date": item.achieved_on,
+                            "Activity": item.activity_name or "Untitled run",
+                            "Role": item.evidence_kind.value.replace("_", " ").title(),
+                            "Distance": f"{item.activity_distance_km:.1f} km",
+                            "Pace": format_pace(item.pace_seconds_per_km),
+                            "Why selected": item.reason,
+                        }
+                        for item in performance.performance_evidence
+                    ]
+                ),
+                hide_index=True,
+                width="stretch",
+            )
+        else:
+            st.info("No representative performance evidence is available yet.")
+
     st.caption(
         f"Evidence through {fitness.as_of_date.isoformat()}: "
         f"{fitness.training.distance_28d_km:.1f} km / 28 days, "

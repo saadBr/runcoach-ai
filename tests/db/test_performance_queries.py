@@ -150,6 +150,11 @@ def test_overview_returns_current_records_and_fitness_estimates(
     assert overview.current_fitness.anchor_capacity_factor == 0.985
     assert overview.current_fitness.training.runs_168d == 3
     assert overview.current_fitness.training.runs_365d == 4
+    assert len(overview.performance_evidence) == 4
+    assert all(
+        item.evidence_kind.value == "verified_personal_best"
+        for item in overview.performance_evidence
+    )
     assert [
         estimate.fitness_potential_time_seconds for estimate in overview.current_fitness.estimates
     ] == pytest.approx([1163.285, 2427.04, 5521.91, 13067.01])
