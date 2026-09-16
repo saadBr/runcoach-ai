@@ -41,13 +41,18 @@ class FakeSession:
         self.rollbacks += 1
 
 
-def _tracking(*, as_of_date: date, final_session_date: date) -> ActivePlanTracking:
+def _tracking(
+    *,
+    as_of_date: date,
+    final_session_date: date,
+    plan_start_date: date = date(2026, 9, 7),
+) -> ActivePlanTracking:
     return ActivePlanTracking(
         goal_id=GOAL_ID,
         plan_id=PLAN_ID,
         active_version=2,
         as_of_date=as_of_date,
-        plan_start_date=date(2026, 9, 7),
+        plan_start_date=plan_start_date,
         race_date=date(2026, 10, 25),
         status="in_progress",
         completed_weeks=0,
@@ -134,6 +139,16 @@ def test_plan_refresh_waits_for_final_detailed_session(
     )
 
     assert update_coaching._should_refresh_plan(tracking) is expected
+
+
+def test_plan_refresh_repairs_a_plan_that_skipped_the_current_week() -> None:
+    tracking = _tracking(
+        as_of_date=date(2026, 9, 8),
+        final_session_date=date(2026, 9, 20),
+        plan_start_date=date(2026, 9, 14),
+    )
+
+    assert update_coaching._should_refresh_plan(tracking) is True
 
 
 def test_update_imports_unseen_file_and_defers_plan_refresh_midweek(

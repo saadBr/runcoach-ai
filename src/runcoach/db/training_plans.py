@@ -93,6 +93,7 @@ class TrainingPlanQueryService:
         race_date: date,
         target_time_seconds: float | None,
         days_per_week: int,
+        plan_start_date: date | None = None,
     ) -> TrainingPlanPreview:
         """Return a deterministic preview without persisting a goal or plan."""
 
@@ -106,6 +107,7 @@ class TrainingPlanQueryService:
                     days_per_week=days_per_week,
                 ),
                 fitness=performance.current_fitness,
+                plan_start_date=plan_start_date,
             )
         except (PerformanceQueryError, ValueError) as error:
             raise TrainingPlanQueryError(str(error)) from error
@@ -169,15 +171,29 @@ class TrainingPlanPersistenceService:
 
         try:
             with self._session.begin():
-                goal = self._session.scalar(
-                    select(Goal).where(
+                row = self._session.execute(
+                    select(Goal, TrainingPlan)
+                    .join(TrainingPlan, TrainingPlan.goal_id == Goal.id)
+                    .where(
                         Goal.athlete_id == athlete_id,
                         Goal.status == "active",
                         Goal.priority == "primary",
+                        TrainingPlan.status == "active",
                     )
-                )
-                if goal is None:
+                    .order_by(TrainingPlan.version.desc())
+                ).first()
+                if row is None:
                     raise TrainingPlanQueryError("No active persisted training plan exists.")
+                goal, active_plan = row._tuple()
+                stored_start = active_plan.plan_payload.get("plan_start_date")
+                if not isinstance(stored_start, str):
+                    raise TrainingPlanQueryError("Active plan is missing its start date.")
+                try:
+                    preserved_start = date.fromisoformat(stored_start)
+                except ValueError as error:
+                    raise TrainingPlanQueryError(
+                        "Active plan has an invalid start date."
+                    ) from error
                 preview = TrainingPlanQueryService(self._session).preview(
                     athlete_id=athlete_id,
                     distance=StandardDistance(goal.race_type),
@@ -188,6 +204,7 @@ class TrainingPlanPersistenceService:
                         else None
                     ),
                     days_per_week=goal.days_per_week,
+                    plan_start_date=preserved_start,
                 )
                 return self._persist_preview(
                     athlete_id=athlete_id,

@@ -3,7 +3,7 @@
 import json
 import re
 from collections.abc import Sequence
-from datetime import date
+from datetime import date, timedelta
 from typing import Literal, Protocol, cast
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -552,7 +552,11 @@ class OpenAIResponsesLanguageModel:
                 "relevant uncertainty. Begin with one sentence that directly answers the exact "
                 "question using concrete time, pace, distance, or duration when available. Then "
                 "give no more than two short explanatory sentences or three concise actions. "
-                "Do not begin by reciting the active plan or generic model status."
+                "Do not begin by reciting the active plan or generic model status. Resolve "
+                "relative dates strictly from coaching_context.as_of_date: 'today' is that date "
+                "and 'tomorrow' is exactly one calendar day later. Never call a later next-plan "
+                "session 'tomorrow'; state that no session is scheduled tomorrow, then give the "
+                "actual date of the next planned session."
             ),
             "input": json.dumps(dynamic_input, separators=(",", ":"), sort_keys=True),
             "text": {
@@ -595,6 +599,36 @@ def _review_generated_reply(
         raise LanguageModelError("Generated coaching cited unsupported evidence.")
     if _UNSAFE_OUTPUT.search(reply.answer):
         raise LanguageModelError("Generated coaching failed the deterministic safety review.")
+
+
+def _review_temporal_grounding(
+    question: str,
+    reply: GeneratedCoachingReply,
+    context: CoachingContext,
+) -> None:
+    """Reject an OpenAI answer that shifts the meaning of today or tomorrow."""
+
+    if "tomorrow" not in question.casefold():
+        return
+    try:
+        tomorrow = date.fromisoformat(context.as_of_date) + timedelta(days=1)
+    except ValueError as error:
+        raise LanguageModelError("Coaching context contains an invalid as-of date.") from error
+    scheduled_dates = {
+        str(item.facts.get("scheduled_date"))
+        for item in context.evidence
+        if item.evidence_id.startswith("plan:next-session:")
+    }
+    if tomorrow.isoformat() in scheduled_dates:
+        return
+    lowered_answer = reply.answer.casefold()
+    correctly_reports_gap = (
+        tomorrow.isoformat() in reply.answer
+        and "no" in lowered_answer
+        and "scheduled" in lowered_answer
+    )
+    if not correctly_reports_gap:
+        raise LanguageModelError("Generated coaching used an incorrect relative date.")
 
 
 def _selected_items(
@@ -709,9 +743,33 @@ def _deterministic_reply(question: str, context: CoachingContext) -> GeneratedCo
     if next_sessions and any(
         term in lowered for term in ("next run", "run next", "today", "tomorrow", "next session")
     ):
+        asks_tomorrow = "tomorrow" in lowered
         asks_easy = any(term in lowered for term in ("recovery", "easy", "aerobic"))
         selected_session = next_sessions[0]
-        if asks_easy:
+        try:
+            tomorrow = date.fromisoformat(context.as_of_date) + timedelta(days=1)
+        except ValueError as error:
+            raise CoachingChatError("Coaching context contains an invalid as-of date.") from error
+        tomorrow_session = next(
+            (
+                item
+                for item in next_sessions
+                if str(item.facts.get("scheduled_date")) == tomorrow.isoformat()
+            ),
+            None,
+        )
+        if asks_tomorrow and tomorrow_session is None:
+            return GeneratedCoachingReply(
+                answer=(
+                    f"No run is scheduled tomorrow, {tomorrow.isoformat()}. "
+                    f"Your next planned session is {selected_session.summary}"
+                ),
+                evidence_ids=(selected_session.evidence_id,),
+                limitations=context.limitations[:2],
+            )
+        if tomorrow_session is not None:
+            selected_session = tomorrow_session
+        elif asks_easy:
             selected_session = next(
                 (
                     item
@@ -901,6 +959,7 @@ class ConversationalCoachService:
                     context=context,
                 )
                 _review_generated_reply(generated, context)
+                _review_temporal_grounding(normalized_question, generated, context)
                 return CoachingReply(
                     **generated.model_dump(),
                     mode="openai",

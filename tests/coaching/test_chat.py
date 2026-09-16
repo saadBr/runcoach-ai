@@ -139,6 +139,33 @@ class FakeLoader:
         return _context()
 
 
+class LatePlanLoader:
+    def load(self, athlete_id: UUID) -> CoachingContext:
+        assert athlete_id == ATHLETE_ID
+        context = _context()
+        evidence = tuple(
+            item.model_copy(
+                update={
+                    "summary": (
+                        "2026-09-14: Easy aerobic run, 11.2 km at 5:07/km to 5:47/km (upcoming)."
+                    ),
+                    "facts": {
+                        **item.facts,
+                        "scheduled_date": "2026-09-14",
+                        "target_distance_km": 11.2,
+                        "pace_range": "5:07/km to 5:47/km",
+                        "faster_seconds_per_km": 307.0,
+                        "slower_seconds_per_km": 347.0,
+                    },
+                }
+            )
+            if item.evidence_id == "plan:next-session:1"
+            else item
+            for item in context.evidence
+        )
+        return context.model_copy(update={"as_of_date": "2026-09-08", "evidence": evidence})
+
+
 class FakeModel:
     def __init__(self, reply: GeneratedCoachingReply | Exception) -> None:
         self.reply = reply
@@ -225,6 +252,33 @@ def test_medical_question_never_reaches_language_model() -> None:
     assert reply.mode == "deterministic"
     assert "cannot diagnose" in reply.answer
     assert model.conversation == ()
+
+
+def test_tomorrow_is_not_confused_with_a_later_planned_session() -> None:
+    service = ConversationalCoachService(context_loader=LatePlanLoader(), language_model=None)
+
+    reply = service.answer(athlete_id=ATHLETE_ID, question="Suggest tomorrow's session")
+
+    assert reply.mode == "deterministic"
+    assert reply.answer.startswith("No run is scheduled tomorrow, 2026-09-09.")
+    assert "Your next planned session is 2026-09-14" in reply.answer
+
+
+def test_temporally_ungrounded_model_reply_falls_back() -> None:
+    model = FakeModel(
+        GeneratedCoachingReply(
+            answer="Tomorrow is the 2026-09-14 easy aerobic run.",
+            evidence_ids=("plan:next-session:1",),
+            limitations=(),
+        )
+    )
+    service = ConversationalCoachService(context_loader=LatePlanLoader(), language_model=model)
+
+    reply = service.answer(athlete_id=ATHLETE_ID, question="Suggest tomorrow's session")
+
+    assert reply.mode == "deterministic"
+    assert reply.answer.startswith("No run is scheduled tomorrow, 2026-09-09.")
+    assert any("incorrect relative date" in limitation for limitation in reply.limitations)
 
 
 def test_valid_structured_model_reply_is_returned_with_provenance() -> None:
@@ -344,6 +398,7 @@ def test_openai_adapter_requests_stateless_structured_output() -> None:
     instructions = str(transport.payload["instructions"])
     assert "directly answers the exact question" in instructions
     assert "Do not begin by reciting the active plan" in instructions
+    assert "'tomorrow' is exactly one calendar day later" in instructions
     text = transport.payload["text"]
     assert isinstance(text, dict)
     assert text["format"]["type"] == "json_schema"

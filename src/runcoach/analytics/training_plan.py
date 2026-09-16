@@ -12,7 +12,7 @@ from runcoach.analytics.current_fitness import (
 )
 from runcoach.analytics.performance import StandardDistance, standard_distance_meters
 
-TRAINING_PLAN_VERSION: Final = "goal_plan_preview_v2"
+TRAINING_PLAN_VERSION: Final = "goal_plan_preview_v3"
 MINIMUM_PLAN_DAYS: Final = 14
 MAXIMUM_PLAN_DAYS: Final = 364
 
@@ -156,9 +156,12 @@ _QUALITY_FOCUS: Final[dict[StandardDistance, str]] = {
 }
 
 
-def _next_monday(as_of_date: date) -> date:
-    days_ahead = (7 - as_of_date.weekday()) % 7
-    return as_of_date + timedelta(days=days_ahead or 7)
+def _plan_week_start(as_of_date: date) -> date:
+    """Start in the current Monday week, except when evidence lands on Sunday."""
+
+    if as_of_date.weekday() == 6:
+        return as_of_date + timedelta(days=1)
+    return as_of_date - timedelta(days=as_of_date.weekday())
 
 
 def _estimate_for(
@@ -496,10 +499,14 @@ def build_training_plan_preview(
     *,
     goal: TrainingGoal,
     fitness: CurrentFitnessAssessment,
+    plan_start_date: date | None = None,
 ) -> TrainingPlanPreview:
     """Build a progressive plan preview from current fitness and training evidence."""
 
-    plan_start_date = _next_monday(fitness.as_of_date)
+    current_week_start = _plan_week_start(fitness.as_of_date)
+    plan_start_date = (
+        current_week_start if plan_start_date is None else min(plan_start_date, current_week_start)
+    )
     plan_days = (goal.race_date - plan_start_date).days + 1
     if plan_days < MINIMUM_PLAN_DAYS:
         raise ValueError("Race date must allow at least two training weeks.")

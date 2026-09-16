@@ -103,14 +103,14 @@ def test_marathon_preview_builds_progressive_outline_and_first_week() -> None:
 
     assert preview.algorithm_version == TRAINING_PLAN_VERSION
     assert preview.status == "preview_not_persisted"
-    assert preview.plan_start_date == date(2026, 9, 7)
-    assert preview.weeks_to_race == 12
+    assert preview.plan_start_date == date(2026, 8, 31)
+    assert preview.weeks_to_race == 13
     assert preview.goal_status is GoalStatus.ACHIEVABLE
     assert preview.fitness_potential_seconds == pytest.approx(11_388.665)
     assert preview.current_readiness_seconds == pytest.approx(11_461.396)
     assert preview.current_preparation_score == pytest.approx(0.92)
     assert preview.recent_weekly_distance_km == pytest.approx(77.972)
-    assert len(preview.weekly_outline) == 12
+    assert len(preview.weekly_outline) == 13
     assert preview.weekly_outline[0].phase is PlanPhase.BASE
     assert preview.weekly_outline[-1].phase is PlanPhase.RACE
     assert preview.weekly_outline[3].target_distance_km < (
@@ -128,6 +128,53 @@ def test_marathon_preview_builds_progressive_outline_and_first_week() -> None:
     )
 
 
+def test_midweek_plan_includes_the_current_monday_week() -> None:
+    base_fitness = _fitness()
+    fitness = replace(
+        base_fitness,
+        as_of_date=date(2026, 9, 8),
+        training=replace(base_fitness.training, as_of_date=date(2026, 9, 8)),
+    )
+
+    preview = build_training_plan_preview(
+        goal=TrainingGoal(
+            distance=StandardDistance.MARATHON,
+            race_date=date(2027, 1, 31),
+            target_time_seconds=None,
+            days_per_week=6,
+        ),
+        fitness=fitness,
+    )
+
+    assert preview.plan_start_date == date(2026, 9, 7)
+    assert preview.weekly_outline[0].start_date == date(2026, 9, 7)
+    assert min(session.scheduled_date for session in preview.first_week) >= date(2026, 9, 7)
+    assert max(session.scheduled_date for session in preview.first_week) <= date(2026, 9, 13)
+
+
+def test_refresh_preserves_the_original_plan_calendar() -> None:
+    base_fitness = _fitness()
+    fitness = replace(
+        base_fitness,
+        as_of_date=date(2026, 9, 15),
+        training=replace(base_fitness.training, as_of_date=date(2026, 9, 15)),
+    )
+
+    preview = build_training_plan_preview(
+        goal=TrainingGoal(
+            distance=StandardDistance.MARATHON,
+            race_date=date(2027, 1, 31),
+            target_time_seconds=None,
+            days_per_week=6,
+        ),
+        fitness=fitness,
+        plan_start_date=date(2026, 9, 7),
+    )
+
+    assert preview.plan_start_date == date(2026, 9, 7)
+    assert preview.weekly_outline[0].start_date == date(2026, 9, 7)
+
+
 def test_january_2027_marathon_plan_builds_specific_endurance_safely() -> None:
     preview = build_training_plan_preview(
         goal=TrainingGoal(
@@ -139,7 +186,7 @@ def test_january_2027_marathon_plan_builds_specific_endurance_safely() -> None:
         fitness=_fitness(),
     )
 
-    assert preview.weeks_to_race == 21
+    assert preview.weeks_to_race == 22
     assert preview.goal.race_date == date(2027, 1, 31)
     assert {week.phase for week in preview.weekly_outline} == set(PlanPhase)
     assert 30 <= max(week.long_run_km for week in preview.weekly_outline) <= 35
@@ -272,7 +319,7 @@ def test_session_paces_and_distances_are_target_specific() -> None:
 @pytest.mark.parametrize(
     ("race_date", "message"),
     (
-        (date(2026, 9, 13), "at least two"),
+        (date(2026, 9, 12), "at least two"),
         (date(2027, 9, 30), "within 52 weeks"),
     ),
 )

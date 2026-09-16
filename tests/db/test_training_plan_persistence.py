@@ -174,9 +174,23 @@ def test_load_and_refresh_active_plan(
     created = _persist(service)
     loaded = service.load_active(athlete_id=ATHLETE_ID)
     db_session.rollback()
+    captured_start_dates: list[date | None] = []
+
+    def refreshed_preview(
+        self: TrainingPlanQueryService,
+        **kwargs: object,
+    ) -> TrainingPlanPreview:
+        del self
+        start_date = kwargs.get("plan_start_date")
+        assert start_date is None or isinstance(start_date, date)
+        captured_start_dates.append(start_date)
+        return _preview()
+
+    monkeypatch.setattr(TrainingPlanQueryService, "preview", refreshed_preview)
     refreshed = service.refresh_active(athlete_id=ATHLETE_ID)
 
     assert loaded.plan_id == created.plan_id
     assert loaded.preview["goal"]["race_date"] == "2027-01-31"
     assert refreshed.created is False
     assert refreshed.version == 1
+    assert captured_start_dates == [date(2026, 9, 7)]

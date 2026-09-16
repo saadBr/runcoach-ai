@@ -1,7 +1,7 @@
 """Shared orchestration for importing runs and refreshing coaching evidence."""
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 from typing import Literal
 from uuid import UUID
 
@@ -70,6 +70,13 @@ def latest_running_date(session: Session, athlete_id: UUID) -> date | None:
 def should_refresh_plan(tracking: ActivePlanTracking) -> bool:
     """Refresh only after the final dated session in the stable detailed week."""
 
+    expected_start = (
+        tracking.as_of_date + timedelta(days=1)
+        if tracking.as_of_date.weekday() == 6
+        else tracking.as_of_date - timedelta(days=tracking.as_of_date.weekday())
+    )
+    if tracking.plan_start_date > expected_start:
+        return True
     final_session_date = max(session.scheduled_date for session in tracking.sessions)
     return tracking.status == "completed" or tracking.as_of_date >= final_session_date
 

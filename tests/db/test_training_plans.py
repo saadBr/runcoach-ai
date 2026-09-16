@@ -39,7 +39,9 @@ def test_preview_builds_goal_from_request_and_current_fitness(
         *,
         goal: TrainingGoal,
         fitness: CurrentFitnessAssessment,
+        plan_start_date: date | None = None,
     ) -> TrainingPlanPreview:
+        assert plan_start_date is None
         captured.append((ATHLETE_ID, goal, fitness))
         return expected
 
