@@ -178,31 +178,30 @@ def _observed_best_effort_marks(
     candidate_ids = {
         activity.id for candidates in candidates_by_distance.values() for activity in candidates
     }
-    trackpoints_by_activity: dict[UUID, list[Trackpoint]] = defaultdict(list)
+    samples_by_activity: dict[UUID, list[DistanceSample]] = defaultdict(list)
     if candidate_ids:
-        for trackpoint in session.scalars(
-            select(Trackpoint)
+        for activity_id, elapsed_ms, distance_m in session.execute(
+            select(Trackpoint.activity_id, Trackpoint.elapsed_ms, Trackpoint.distance_m)
             .where(
                 Trackpoint.activity_id.in_(candidate_ids),
                 Trackpoint.distance_m.is_not(None),
             )
             .order_by(Trackpoint.activity_id, Trackpoint.sequence_number)
-        ):
-            trackpoints_by_activity[trackpoint.activity_id].append(trackpoint)
+        ).yield_per(1_000):
+            if distance_m is not None:
+                samples_by_activity[activity_id].append(
+                    DistanceSample(elapsed_ms=elapsed_ms, distance_m=float(distance_m))
+                )
+    activity_samples = {
+        activity_id: tuple(samples) for activity_id, samples in samples_by_activity.items()
+    }
 
     marks: list[FitnessMark] = []
     for distance, candidates in candidates_by_distance.items():
         target_m = standard_distance_meters(distance)
         best: tuple[float, Activity, PerformanceEffortType] | None = None
         for activity in candidates:
-            samples = tuple(
-                DistanceSample(
-                    elapsed_ms=trackpoint.elapsed_ms,
-                    distance_m=float(trackpoint.distance_m),
-                )
-                for trackpoint in trackpoints_by_activity.get(activity.id, ())
-                if trackpoint.distance_m is not None
-            )
+            samples = activity_samples.get(activity.id, ())
             try:
                 rolling = calculate_fastest_rolling_distance_effort(samples, distance)
             except ValueError:

@@ -176,11 +176,10 @@ def test_overview_uses_normalized_api_url(
 def test_performance_uses_read_only_analytics_endpoint(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    captured_urls: list[str] = []
+    captured_requests: list[tuple[str, float]] = []
 
     def fake_urlopen(request: Request, timeout: float) -> FakeResponse:
-        del timeout
-        captured_urls.append(request.full_url)
+        captured_requests.append((request.full_url, timeout))
         return FakeResponse(b'{"personal_bests": [], "prediction_status": "audit"}')
 
     monkeypatch.setattr(api_client, "urlopen", fake_urlopen)
@@ -188,7 +187,7 @@ def test_performance_uses_read_only_analytics_endpoint(
     result = RunCoachApiClient("http://localhost:8000").get_performance()
 
     assert result["personal_bests"] == []
-    assert captured_urls == ["http://localhost:8000/api/v1/analytics/performance"]
+    assert captured_requests == [("http://localhost:8000/api/v1/analytics/performance", 30.0)]
 
 
 def test_label_audit_client_reads_and_updates_private_review_queue(

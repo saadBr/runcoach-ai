@@ -143,7 +143,11 @@ class RunCoachApiClient:
     def get_performance(self) -> JsonObject:
         """Return verified personal bests and prediction readiness."""
 
-        return self._get_json("/api/v1/analytics/performance")
+        return self._request_json(
+            "/api/v1/analytics/performance",
+            method="GET",
+            timeout_seconds=max(self._timeout_seconds, 30.0),
+        )
 
     def get_performance_label_audit(
         self,
