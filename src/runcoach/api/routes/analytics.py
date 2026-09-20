@@ -164,6 +164,21 @@ class PersonalBestResponse(BaseModel):
     algorithm_version: str
 
 
+class CurrentBestResponse(BaseModel):
+    """Fastest recorded effort at a standard distance, with its source."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    distance: StandardDistance
+    elapsed_time_seconds: float
+    pace_seconds_per_km: float
+    achieved_on: date
+    activity_id: UUID
+    activity_name: str | None
+    activity_distance_km: float
+    source: str
+
+
 class FitnessMarkResponse(BaseModel):
     """One verified mark anchoring the current-fitness estimate."""
 
@@ -251,7 +266,7 @@ class SelectedPerformanceEvidenceResponse(BaseModel):
 
 
 class PerformanceOverviewResponse(BaseModel):
-    """Verified personal bests and an experimental current-fitness estimate."""
+    """Recorded bests, verified records, and an experimental fitness estimate."""
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -262,8 +277,9 @@ class PerformanceOverviewResponse(BaseModel):
     verified_labels: int
     interpretation_role: str
     limitations: tuple[str, ...]
-    evidence_selection_version: str = "representative_performance_evidence_v1"
+    evidence_selection_version: str = "representative_performance_evidence_v3"
     performance_evidence: tuple[SelectedPerformanceEvidenceResponse, ...] = ()
+    current_bests: tuple[CurrentBestResponse, ...] = ()
 
 
 class PerformanceLabelCandidateResponse(BaseModel):

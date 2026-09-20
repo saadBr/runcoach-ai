@@ -1,6 +1,7 @@
 """Read-only verified-performance queries for the analytical dashboard."""
 
 from collections import defaultdict
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
@@ -41,6 +42,7 @@ DISTANCE_BY_METERS = {
     Decimal("21097.500"): StandardDistance.HALF_MARATHON,
     Decimal("42195.000"): StandardDistance.MARATHON,
 }
+COINCIDENT_EFFORT_TOLERANCE_SECONDS = 2.0
 
 
 class PerformanceQueryError(RuntimeError):
@@ -65,8 +67,30 @@ class PersonalBestSummary:
 
 
 @dataclass(frozen=True, slots=True)
+class ObservedBestEffort:
+    """A calculated standard-distance effort with its source activity."""
+
+    mark: FitnessMark
+    activity: Activity
+
+
+@dataclass(frozen=True, slots=True)
+class CurrentBestSummary:
+    """Fastest recorded standard-distance effort, including training splits."""
+
+    distance: StandardDistance
+    elapsed_time_seconds: float
+    pace_seconds_per_km: float
+    achieved_on: date
+    activity_id: UUID
+    activity_name: str | None
+    activity_distance_km: float
+    source: str
+
+
+@dataclass(frozen=True, slots=True)
 class PerformanceOverview:
-    """Current verified personal bests and experimental current-fitness evidence."""
+    """Recorded bests, verified records, and experimental fitness evidence."""
 
     personal_bests: tuple[PersonalBestSummary, ...]
     current_fitness: CurrentFitnessAssessment
@@ -77,6 +101,7 @@ class PerformanceOverview:
     limitations: tuple[str, ...]
     evidence_selection_version: str = PERFORMANCE_EVIDENCE_VERSION
     performance_evidence: tuple[SelectedPerformanceEvidence, ...] = ()
+    current_bests: tuple[CurrentBestSummary, ...] = ()
 
 
 def _standard_distance(distance_m: Decimal) -> StandardDistance:
@@ -160,8 +185,9 @@ def _observed_best_effort_marks(
     *,
     session: Session,
     activities: tuple[Activity, ...],
-) -> tuple[FitnessMark, ...]:
-    """Derive provisional best efforts from imported activity evidence."""
+    verified_elapsed_by_activity_distance: Mapping[tuple[UUID, StandardDistance], float],
+) -> tuple[ObservedBestEffort, ...]:
+    """Derive best efforts, skipping near-identical verified efforts from the same run."""
 
     candidates_by_distance: dict[StandardDistance, tuple[Activity, ...]] = {}
     for distance in StandardDistance:
@@ -196,7 +222,7 @@ def _observed_best_effort_marks(
         activity_id: tuple(samples) for activity_id, samples in samples_by_activity.items()
     }
 
-    marks: list[FitnessMark] = []
+    marks: list[ObservedBestEffort] = []
     for distance, candidates in candidates_by_distance.items():
         target_m = standard_distance_meters(distance)
         best: tuple[float, Activity, PerformanceEffortType] | None = None
@@ -219,6 +245,13 @@ def _observed_best_effort_marks(
                 )
                 effort_type = PerformanceEffortType.WHOLE_ACTIVITY
 
+            verified_seconds = verified_elapsed_by_activity_distance.get((activity.id, distance))
+            if (
+                verified_seconds is not None
+                and abs(elapsed_seconds - verified_seconds) <= COINCIDENT_EFFORT_TOLERANCE_SECONDS
+            ):
+                continue
+
             candidate = (elapsed_seconds, activity, effort_type)
             if best is None or (candidate[0], -candidate[1].local_start_date.toordinal()) < (
                 best[0],
@@ -230,15 +263,18 @@ def _observed_best_effort_marks(
             continue
         elapsed_seconds, activity, effort_type = best
         marks.append(
-            FitnessMark(
-                distance=distance,
-                elapsed_time_seconds=round(elapsed_seconds, 6),
-                achieved_on=activity.local_start_date,
-                verification_status=PerformanceLabel.VERIFIED_MAX_EFFORT,
-                effort_type=effort_type,
-                activity_distance_km=round(float(activity.distance_m) / 1_000, 6),
-                session_kind=classify_session(activity.name).primary_kind,
-                is_verified=False,
+            ObservedBestEffort(
+                mark=FitnessMark(
+                    distance=distance,
+                    elapsed_time_seconds=round(elapsed_seconds, 6),
+                    achieved_on=activity.local_start_date,
+                    verification_status=PerformanceLabel.VERIFIED_MAX_EFFORT,
+                    effort_type=effort_type,
+                    activity_distance_km=round(float(activity.distance_m) / 1_000, 6),
+                    session_kind=classify_session(activity.name).primary_kind,
+                    is_verified=False,
+                ),
+                activity=activity,
             )
         )
     return tuple(marks)
@@ -375,17 +411,6 @@ class PerformanceQueryService:
             ),
             already_verified_activity_ids=frozenset(record.activity_id for record in all_records),
         )
-        performance_evidence = tuple(
-            sorted(
-                (*verified_evidence, *activity_evidence),
-                key=lambda item: (
-                    item.achieved_on,
-                    item.evidence_kind,
-                    str(item.activity_id),
-                ),
-                reverse=True,
-            )
-        )
 
         def fitness_mark(record: PersonalBest) -> FitnessMark:
             activity = activity_by_id.get(record.activity_id)
@@ -404,11 +429,66 @@ class PerformanceQueryService:
             )
 
         verified_marks = tuple(fitness_mark(record) for record in records)
-        observed_marks = _observed_best_effort_marks(
+        verified_elapsed_by_activity_distance = {
+            (record.activity_id, _standard_distance(record.distance_m)): record.elapsed_time_ms
+            / 1_000
+            for record in all_records
+        }
+        observed_best_efforts = _observed_best_effort_marks(
             session=self._session,
             activities=activities,
+            verified_elapsed_by_activity_distance=verified_elapsed_by_activity_distance,
         )
+        observed_marks = tuple(effort.mark for effort in observed_best_efforts)
         verified_by_distance = {mark.distance: mark for mark in verified_marks}
+        observed_evidence = tuple(
+            SelectedPerformanceEvidence(
+                activity_id=effort.activity.id,
+                activity_name=effort.activity.name,
+                achieved_on=effort.mark.achieved_on,
+                evidence_kind=PerformanceEvidenceKind.OBSERVED_TRAINING_BEST,
+                target_distance=effort.mark.distance,
+                activity_distance_km=round(float(effort.activity.distance_m) / 1_000, 6),
+                elapsed_time_seconds=round(effort.mark.elapsed_time_seconds, 3),
+                pace_seconds_per_km=round(
+                    effort.mark.elapsed_time_seconds
+                    / (standard_distance_meters(effort.mark.distance) / 1_000),
+                    6,
+                ),
+                session_kind=effort.mark.session_kind,
+                reason=(
+                    "Fastest recorded standard-distance effort within this training activity; "
+                    "faster than the previously verified result."
+                ),
+            )
+            for effort in observed_best_efforts
+            if effort.mark.distance in verified_by_distance
+            and effort.mark.elapsed_time_seconds
+            < verified_by_distance[effort.mark.distance].elapsed_time_seconds
+        )
+        observed_activity_distances = {
+            (item.activity_id, item.target_distance) for item in observed_evidence
+        }
+        performance_evidence = tuple(
+            sorted(
+                (
+                    *(
+                        item
+                        for item in verified_evidence
+                        if (item.activity_id, item.target_distance)
+                        not in observed_activity_distances
+                    ),
+                    *activity_evidence,
+                    *observed_evidence,
+                ),
+                key=lambda item: (
+                    item.achieved_on,
+                    item.evidence_kind,
+                    str(item.activity_id),
+                ),
+                reverse=True,
+            )
+        )
         observed_by_distance = {mark.distance: mark for mark in observed_marks}
         marks = tuple(
             min(
@@ -425,6 +505,42 @@ class PerformanceQueryService:
             for distance in StandardDistance
             if distance in verified_by_distance or distance in observed_by_distance
         )
+        verified_record_by_distance = {
+            _standard_distance(record.distance_m): record for record in records
+        }
+        observed_effort_by_distance = {
+            effort.mark.distance: effort for effort in observed_best_efforts
+        }
+        current_bests: list[CurrentBestSummary] = []
+        for mark in marks:
+            if mark.is_verified:
+                source_record = verified_record_by_distance[mark.distance]
+                source_activity = activity_by_id[source_record.activity_id]
+                source = "verified_result"
+            else:
+                observed_effort = observed_effort_by_distance[mark.distance]
+                source_activity = observed_effort.activity
+                source = (
+                    "training_split"
+                    if mark.effort_type is PerformanceEffortType.ROLLING_SEGMENT
+                    else "training_activity"
+                )
+            current_bests.append(
+                CurrentBestSummary(
+                    distance=mark.distance,
+                    elapsed_time_seconds=mark.elapsed_time_seconds,
+                    pace_seconds_per_km=round(
+                        mark.elapsed_time_seconds
+                        / (standard_distance_meters(mark.distance) / 1_000),
+                        6,
+                    ),
+                    achieved_on=mark.achieved_on,
+                    activity_id=source_activity.id,
+                    activity_name=source_activity.name,
+                    activity_distance_km=round(float(source_activity.distance_m) / 1_000, 6),
+                    source=source,
+                )
+            )
         anchor = max(marks, key=lambda mark: mark.achieved_on)
         older_anchor_records = tuple(
             record
@@ -471,4 +587,5 @@ class PerformanceQueryService:
             limitations=current_fitness.limitations,
             evidence_selection_version=PERFORMANCE_EVIDENCE_VERSION,
             performance_evidence=performance_evidence,
+            current_bests=tuple(current_bests),
         )

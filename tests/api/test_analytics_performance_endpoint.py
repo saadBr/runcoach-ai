@@ -20,6 +20,7 @@ from runcoach.analytics.performance import (
 from runcoach.api.routes import analytics as analytics_routes
 from runcoach.config import Settings, get_settings
 from runcoach.db.performance_queries import (
+    CurrentBestSummary,
     PerformanceOverview,
     PerformanceQueryError,
     PersonalBestSummary,
@@ -81,6 +82,18 @@ def _performance_overview() -> PerformanceOverview:
         verified_labels=1,
         interpretation_role="openai_explains_validated_outputs_only",
         limitations=current_fitness.limitations,
+        current_bests=(
+            CurrentBestSummary(
+                distance=StandardDistance.TEN_K,
+                elapsed_time_seconds=2_400.0,
+                pace_seconds_per_km=240.0,
+                achieved_on=date(2026, 4, 1),
+                activity_id=ACTIVITY_ID,
+                activity_name="Training workout",
+                activity_distance_km=20.0,
+                source="training_split",
+            ),
+        ),
     )
 
 
@@ -125,6 +138,8 @@ def test_performance_returns_verified_records_and_model_readiness(
     assert body["personal_bests"][0]["distance"] == "10k"
     assert body["personal_bests"][0]["elapsed_time_seconds"] == 2464.0
     assert body["personal_bests"][0]["verification_status"] == "verified_race"
+    assert body["current_bests"][0]["elapsed_time_seconds"] == 2_400.0
+    assert body["current_bests"][0]["source"] == "training_split"
     assert body["prediction_status"] == "experimental_not_validated"
     assert body["prediction_method"] == "training_context_fitness_v2"
     assert body["verified_labels"] == 1

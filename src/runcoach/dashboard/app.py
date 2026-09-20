@@ -15,6 +15,7 @@ import streamlit as st
 from pydantic import ValidationError
 
 from runcoach.analytics.performance import StandardDistance
+from runcoach.analytics.performance_evidence import PerformanceEvidenceKind
 from runcoach.dashboard.api_client import (
     DashboardApiError,
     DashboardAuthenticationError,
@@ -32,6 +33,7 @@ from runcoach.dashboard.schemas import (
     PerformanceLabelAudit,
     PerformanceOverview,
     PersistedTrainingPlan,
+    SelectedPerformanceEvidence,
     TrainingPlanPreview,
     UploadedRunResult,
 )
@@ -528,6 +530,20 @@ def format_duration(seconds: float) -> str:
     return f"{minutes}:{remaining_seconds:02d}"
 
 
+def format_performance_evidence_effort(item: SelectedPerformanceEvidence) -> str:
+    """Display the distance actually timed, not a supporting training band."""
+
+    if item.target_distance is not None and item.evidence_kind in {
+        PerformanceEvidenceKind.VERIFIED_PERSONAL_BEST,
+        PerformanceEvidenceKind.VERIFIED_HISTORY,
+        PerformanceEvidenceKind.OBSERVED_TRAINING_BEST,
+    }:
+        distance = distance_label(item.target_distance)
+    else:
+        distance = f"{item.activity_distance_km:.1f} km"
+    return f"{distance} in {format_duration(item.elapsed_time_seconds)}"
+
+
 def parse_duration(value: str) -> float:
     """Parse M:SS or H:MM:SS user input into seconds."""
 
@@ -776,26 +792,23 @@ def render_sensor_coverage(overview: AnalyticsOverview) -> None:
 
 
 def render_performance(performance: PerformanceOverview, api_url: str) -> None:
-    """Render verified PB evidence and experimental current-fitness estimates."""
+    """Render recorded PBs and experimental current-fitness estimates."""
 
     del api_url
 
-    st.subheader("Verified personal bests")
-    record_columns = st.columns(len(performance.personal_bests))
+    st.subheader("Personal bests")
+    record_columns = st.columns(len(performance.current_bests))
 
     for column, personal_best in zip(
         record_columns,
-        performance.personal_bests,
+        performance.current_bests,
         strict=True,
     ):
         column.metric(
             distance_label(personal_best.distance),
             format_duration(personal_best.elapsed_time_seconds),
         )
-        column.caption(
-            f"{personal_best.achieved_at.date().isoformat()} · "
-            f"{personal_best.verification_status.value.replace('_', ' ')}"
-        )
+        column.caption(personal_best.achieved_on.isoformat())
 
     st.subheader("Training-informed race prediction")
     st.info(
@@ -846,6 +859,7 @@ def render_performance(performance: PerformanceOverview, api_url: str) -> None:
                             "Activity": item.activity_name or "Untitled run",
                             "Role": item.evidence_kind.value.replace("_", " ").title(),
                             "Distance": f"{item.activity_distance_km:.1f} km",
+                            "Effort": format_performance_evidence_effort(item),
                             "Pace": format_pace(item.pace_seconds_per_km),
                             "Why selected": item.reason,
                         }
@@ -867,10 +881,7 @@ def render_performance(performance: PerformanceOverview, api_url: str) -> None:
         f"Longest run in 84 days: "
         f"{format_optional(fitness.training.longest_run_84d_km)} km."
     )
-    st.caption(
-        "Personal bests are athlete-confirmed. Faster imported efforts may appear as supporting "
-        "evidence until you confirm them."
-    )
+    st.caption("Personal bests show your fastest recorded efforts at each distance.")
     st.caption(
         "Race-day results can still vary with weather, terrain, sleep, health, taper, and pacing."
     )

@@ -153,6 +153,19 @@ class PersonalBest(DashboardSchema):
     algorithm_version: str = Field(min_length=1)
 
 
+class CurrentBest(DashboardSchema):
+    """Fastest recorded effort at a standard distance, with its source."""
+
+    distance: StandardDistance
+    elapsed_time_seconds: float = Field(gt=0)
+    pace_seconds_per_km: float = Field(gt=0)
+    achieved_on: date
+    activity_id: UUID
+    activity_name: str | None
+    activity_distance_km: float = Field(gt=0)
+    source: str = Field(min_length=1)
+
+
 class FitnessMark(DashboardSchema):
     """One verified performance anchoring the estimate."""
 
@@ -230,7 +243,7 @@ class SelectedPerformanceEvidence(DashboardSchema):
 
 
 class PerformanceOverview(DashboardSchema):
-    """Verified personal-best and current-fitness response."""
+    """Recorded bests, verified records, and current-fitness response."""
 
     personal_bests: tuple[PersonalBest, ...] = Field(min_length=1)
     current_fitness: CurrentFitness
@@ -239,8 +252,9 @@ class PerformanceOverview(DashboardSchema):
     verified_labels: int = Field(ge=0)
     interpretation_role: str = Field(min_length=1)
     limitations: tuple[str, ...] = Field(min_length=1)
-    evidence_selection_version: str = "representative_performance_evidence_v1"
+    evidence_selection_version: str = "representative_performance_evidence_v3"
     performance_evidence: tuple[SelectedPerformanceEvidence, ...] = ()
+    current_bests: tuple[CurrentBest, ...] = ()
 
 
 class PerformanceLabelCandidate(DashboardSchema):

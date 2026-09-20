@@ -232,31 +232,30 @@ class DatabaseCoachingContextLoader:
             ),
         ]
 
-        for personal_best in performance.personal_bests:
+        for personal_best in performance.current_bests:
             evidence.append(
                 EvidenceItem(
                     evidence_id=f"pb:{personal_best.distance.value}",
                     category="performance",
                     summary=(
-                        f"Verified {personal_best.distance.value} best is "
+                        f"Current {personal_best.distance.value} personal best is "
                         f"{_duration(personal_best.elapsed_time_seconds)}, achieved "
-                        f"{personal_best.achieved_at.date().isoformat()}."
+                        f"{personal_best.achieved_on.isoformat()} as a "
+                        f"{personal_best.source.replace('_', ' ')}."
                     ),
                     facts={
                         "distance": personal_best.distance.value,
                         "time": _duration(personal_best.elapsed_time_seconds),
                         "elapsed_time_seconds": personal_best.elapsed_time_seconds,
                         "pace_seconds_per_km": personal_best.pace_seconds_per_km,
-                        "achieved_on": personal_best.achieved_at.date().isoformat(),
-                        "verification_status": personal_best.verification_status.value,
+                        "achieved_on": personal_best.achieved_on.isoformat(),
+                        "source": personal_best.source,
                     },
                 )
             )
 
         active_pb_activity_ids = {
-            activity_id
-            for personal_best in performance.personal_bests
-            if (activity_id := getattr(personal_best, "activity_id", None)) is not None
+            personal_best.activity_id for personal_best in performance.current_bests
         }
         for selected in getattr(performance, "performance_evidence", ()):
             if selected.activity_id in active_pb_activity_ids:

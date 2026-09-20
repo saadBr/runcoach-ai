@@ -546,6 +546,16 @@ def test_database_loader_builds_minimized_context(
     )
     performance = SimpleNamespace(
         personal_bests=(personal_best,),
+        current_bests=(
+            SimpleNamespace(
+                distance=StandardDistance.FIVE_K,
+                elapsed_time_seconds=1_128.0,
+                pace_seconds_per_km=225.6,
+                achieved_on=date(2026, 9, 1),
+                source="verified_result",
+                activity_id=UUID("018f0000-0000-7000-8000-000000000010"),
+            ),
+        ),
         current_fitness=current_fitness,
         limitations=("Experimental model.",),
     )

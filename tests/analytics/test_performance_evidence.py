@@ -78,6 +78,8 @@ def test_requested_standard_distance_benchmarks_are_selected() -> None:
     assert by_distance[StandardDistance.HALF_MARATHON].evidence_kind is (
         PerformanceEvidenceKind.STANDARD_DISTANCE_PERFORMANCE
     )
+    assert by_distance[StandardDistance.TEN_K].elapsed_time_seconds == 2_500
+    assert by_distance[StandardDistance.HALF_MARATHON].elapsed_time_seconds == 6_200
 
 
 def test_strong_training_keeps_fastest_and_most_recent_per_distance_band() -> None:
@@ -113,6 +115,11 @@ def test_strong_training_keeps_fastest_and_most_recent_per_distance_band() -> No
         recent.activity_id,
     }
     assert all(item.evidence_kind is PerformanceEvidenceKind.STRONG_TRAINING for item in selected)
+    assert all(item.target_distance is None for item in selected)
+    assert all(
+        item.elapsed_time_seconds in {fastest.elapsed_time_seconds, recent.elapsed_time_seconds}
+        for item in selected
+    )
 
 
 def test_stopped_or_already_verified_activities_are_not_reselected() -> None:

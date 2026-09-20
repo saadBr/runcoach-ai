@@ -413,9 +413,16 @@ finish times are linearly interpolated at all piecewise-linear breakpoints, and 
 positive elapsed interval is selected deterministically. Distance samples must be ordered by
 elapsed time and cumulative distance must not decrease.
 
-This derived interval is evidence, not an automatic label. A provider best effort or manual
-review supplies the verified result stored in `personal_bests`; small differences caused by
-sampling and provider rounding are preserved rather than silently rewritten.
+The fastest valid recorded interval becomes the displayed personal best even if it occurred
+within a training run. Its source is labeled as a training split, not a race. The separate
+`personal_bests` records remain athlete/provider-verified progression events for audit and
+chronological evaluation; a derived split does not silently change their verification status.
+Small differences caused by sampling and provider rounding are preserved.
+Near-identical calculated and verified efforts from the same activity and distance are
+shown once, using the verified result when their times differ by at most two seconds.
+Supporting whole-run evidence reports the activity's actual distance and elapsed time;
+distance bands used for selecting representative training runs are not displayed as timed
+race distances.
 
 The deterministic Riegel calculation remains an internal comparison benchmark:
 
@@ -462,9 +469,10 @@ evaluation. It is not the Riegel formula and is not presented as a validated rac
 The calculation:
 
 1. Compares the active verified PB with a provisional fastest exact-distance effort derived from
-   a bounded set of relevant Strava sensor activities. It uses the faster available mark for each
-   distance, reports derived evidence with low confidence, and selects the newest resulting mark
-   as the current fitness anchor.
+   eligible Strava sensor activities. It uses the faster available mark for each distance, reports
+   derived evidence with low confidence, and selects the newest resulting mark as the current
+   fitness anchor. A faster rolling split inside a longer workout is shown separately as an
+   observed training best; it does not silently replace an athlete-confirmed PB.
 2. Finds the athlete's best older verified mark at that same distance when available.
 3. Classifies the anchor activity title. When a best-effort segment is embedded inside a
    substantially longer quality session, applies a bounded four-percent workout-reserve

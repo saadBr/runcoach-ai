@@ -24,13 +24,48 @@ from runcoach.dashboard.app import (
     format_duration,
     format_optional,
     format_pace,
+    format_performance_evidence_effort,
     upload_title_from_filename,
     weekly_frame,
 )
-from runcoach.dashboard.schemas import AnalyticsTrends
+from runcoach.dashboard.schemas import AnalyticsTrends, SelectedPerformanceEvidence
 
 APP_PATH = Path(__file__).resolve().parents[2] / "src" / "runcoach" / "dashboard" / "app.py"
 TEST_ACCESS_TOKEN = "opaque-dashboard-test-token-with-sufficient-length"
+
+
+@pytest.mark.parametrize(
+    ("kind", "target", "distance_km", "seconds", "expected"),
+    (
+        ("strong_training", None, 10.0, 2_570.0, "10.0 km in 42:50"),
+        ("strong_training", None, 5.0, 1_315.0, "5.0 km in 21:55"),
+        ("standard_distance_performance", "half_marathon", 21.3, 5_900.0, "21.3 km in 1:38:20"),
+        ("observed_training_best", "10k", 20.0, 2_391.0, "10K in 39:51"),
+    ),
+)
+def test_performance_evidence_effort_uses_timed_distance(
+    kind: str,
+    target: str | None,
+    distance_km: float,
+    seconds: float,
+    expected: str,
+) -> None:
+    item = SelectedPerformanceEvidence.model_validate(
+        {
+            "activity_id": "018f0000-0000-7000-8000-000000000040",
+            "activity_name": "Training run",
+            "achieved_on": "2026-09-20",
+            "evidence_kind": kind,
+            "target_distance": target,
+            "activity_distance_km": distance_km,
+            "elapsed_time_seconds": seconds,
+            "pace_seconds_per_km": seconds / distance_km,
+            "session_kind": "easy",
+            "reason": "Representative training evidence.",
+        }
+    )
+
+    assert format_performance_evidence_effort(item) == expected
 
 
 def test_private_chat_state_is_preserved_only_for_the_same_session() -> None:
@@ -181,6 +216,19 @@ PERSONAL_BESTS = [
 
 PERFORMANCE_PAYLOAD = {
     "personal_bests": PERSONAL_BESTS,
+    "current_bests": [
+        {
+            "distance": best["distance"],
+            "elapsed_time_seconds": best["elapsed_time_seconds"],
+            "pace_seconds_per_km": best["pace_seconds_per_km"],
+            "achieved_on": str(best["achieved_at"])[:10],
+            "activity_id": best["activity_id"],
+            "activity_name": "Synthetic Run",
+            "activity_distance_km": cast(float, best["distance_m"]) / 1_000,
+            "source": "verified_result",
+        }
+        for best in PERSONAL_BESTS
+    ],
     "current_fitness": {
         "algorithm_version": "training_context_fitness_v2",
         "status": "experimental_not_validated",
@@ -739,6 +787,41 @@ def test_dashboard_renders_validated_analytics(
     assert "Calculation provenance" not in [heading.value for heading in app.subheader]
     assert "Refresh dashboard" in [button.label for button in app.button]
     assert "Refresh calculated data" not in [button.label for button in app.button]
+
+
+def test_dashboard_shows_training_split_as_current_personal_best(
+    dashboard_api: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setitem(
+        PERFORMANCE_PAYLOAD,
+        "current_bests",
+        [
+            {
+                **best,
+                "elapsed_time_seconds": 2_400.0,
+                "pace_seconds_per_km": 240.0,
+                "achieved_on": "2026-10-01",
+                "activity_id": "018f0000-0000-7000-8000-000000000040",
+                "activity_name": "8K Easy + 10K HM Pace + 2K CD",
+                "activity_distance_km": 20.0,
+                "source": "training_split",
+            }
+            if best["distance"] == "10k"
+            else best
+            for best in cast(list[dict[str, object]], PERFORMANCE_PAYLOAD["current_bests"])
+        ],
+    )
+
+    app = _authenticated_dashboard()
+
+    assert dashboard_api is None
+    assert not app.exception
+    assert "Personal bests" in [heading.value for heading in app.subheader]
+    assert "Faster splits found in training" not in [heading.value for heading in app.subheader]
+    assert any(metric.label == "10K" and metric.value == "40:00" for metric in app.metric)
+    assert any(caption.value == "2026-10-01" for caption in app.caption)
+    assert not any("training split" in caption.value for caption in app.caption)
 
 
 def test_sign_out_clears_token_and_private_coach_history(

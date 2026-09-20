@@ -263,6 +263,105 @@ def test_missing_distance_uses_fastest_observed_sensor_effort(
     assert len(overview.personal_bests) == 2
 
 
+def test_faster_10k_split_in_slow_full_run_becomes_current_pb(
+    db_session: Session,
+) -> None:
+    _seed_personal_bests(db_session)
+    workout_id = UUID("018f0000-0000-7000-8000-000000000040")
+    workout = _activity(workout_id, month=10)
+    workout.name = "8K Easy + 10K HM Pace + 2K CD"
+    workout.activity_type = "easy"
+    workout.distance_m = Decimal("20000.000")
+    workout.moving_time_ms = 6_080_000
+    workout.elapsed_time_ms = 6_080_000
+    db_session.add(workout)
+    db_session.add_all(
+        Trackpoint(
+            activity_id=workout_id,
+            sequence_number=index,
+            recorded_at=workout.start_time_utc,
+            elapsed_ms=elapsed_ms,
+            distance_m=Decimal(str(distance_m)),
+            is_paused=False,
+        )
+        for index, (elapsed_ms, distance_m) in enumerate(
+            ((0, 0), (2_880_000, 8_000), (5_280_000, 18_000), (6_080_000, 20_000))
+        )
+    )
+    db_session.commit()
+
+    overview = PerformanceQueryService(db_session).overview(athlete_id=ATHLETE_ID)
+
+    verified_10k = next(
+        best for best in overview.personal_bests if best.distance is StandardDistance.TEN_K
+    )
+    assert verified_10k.elapsed_time_seconds == 2_464
+    current_10k = next(
+        best for best in overview.current_bests if best.distance is StandardDistance.TEN_K
+    )
+    assert current_10k.elapsed_time_seconds == 2_400
+    assert current_10k.pace_seconds_per_km == 240
+    assert current_10k.activity_id == workout_id
+    assert current_10k.source == "training_split"
+    observed_10k = next(
+        item
+        for item in overview.performance_evidence
+        if item.evidence_kind.value == "observed_training_best"
+        and item.target_distance is StandardDistance.TEN_K
+    )
+    assert observed_10k.activity_id == workout_id
+    assert observed_10k.elapsed_time_seconds == 2_400
+    assert observed_10k.pace_seconds_per_km == 240
+    assert overview.current_fitness.anchor.elapsed_time_seconds == 2_400
+
+
+def test_near_identical_verified_and_rolling_efforts_are_one_record(
+    db_session: Session,
+) -> None:
+    _seed_personal_bests(db_session)
+    ten_k_activity = db_session.get(Activity, ACTIVITY_IDS[1])
+    assert ten_k_activity is not None
+    ten_k_activity.distance_m = Decimal("10000.000")
+    ten_k_activity.moving_time_ms = 2_463_000
+    ten_k_activity.elapsed_time_ms = 2_463_000
+    db_session.add_all(
+        (
+            Trackpoint(
+                activity_id=ten_k_activity.id,
+                sequence_number=0,
+                recorded_at=ten_k_activity.start_time_utc,
+                elapsed_ms=0,
+                distance_m=Decimal("0.000"),
+                is_paused=False,
+            ),
+            Trackpoint(
+                activity_id=ten_k_activity.id,
+                sequence_number=1,
+                recorded_at=ten_k_activity.start_time_utc,
+                elapsed_ms=2_463_000,
+                distance_m=Decimal("10000.000"),
+                is_paused=False,
+            ),
+        )
+    )
+    db_session.commit()
+
+    overview = PerformanceQueryService(db_session).overview(athlete_id=ATHLETE_ID)
+
+    ten_k_best = next(
+        best for best in overview.current_bests if best.distance is StandardDistance.TEN_K
+    )
+    assert ten_k_best.elapsed_time_seconds == 2_464
+    assert ten_k_best.source == "verified_result"
+    matching_rows = [
+        item
+        for item in overview.performance_evidence
+        if item.activity_id == ten_k_activity.id and item.target_distance is StandardDistance.TEN_K
+    ]
+    assert len(matching_rows) == 1
+    assert matching_rows[0].evidence_kind.value == "verified_personal_best"
+
+
 def test_missing_athlete_is_rejected(db_session: Session) -> None:
     with pytest.raises(PerformanceQueryError, match="does not exist"):
         PerformanceQueryService(db_session).overview(athlete_id=OTHER_ATHLETE_ID)

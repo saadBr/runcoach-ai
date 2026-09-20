@@ -14,7 +14,7 @@ from runcoach.analytics.performance import (
 )
 from runcoach.analytics.session_classification import SessionKind
 
-PERFORMANCE_EVIDENCE_VERSION: Final = "representative_performance_evidence_v1"
+PERFORMANCE_EVIDENCE_VERSION: Final = "representative_performance_evidence_v3"
 MAX_STRONG_TRAINING_PACE_SECONDS_PER_KM: Final = 270.0
 MINIMUM_STRONG_TRAINING_DISTANCE_KM: Final = 3.0
 MINIMUM_STRONG_TRAINING_DURATION_SECONDS: Final = 12 * 60.0
@@ -26,6 +26,7 @@ class PerformanceEvidenceKind(StrEnum):
 
     VERIFIED_PERSONAL_BEST = "verified_personal_best"
     VERIFIED_HISTORY = "verified_history"
+    OBSERVED_TRAINING_BEST = "observed_training_best"
     RACE_PERFORMANCE = "race_performance"
     STANDARD_DISTANCE_PERFORMANCE = "standard_distance_performance"
     STRONG_TRAINING = "strong_training"
@@ -165,10 +166,9 @@ def select_activity_performance_evidence(
                     evidence_kind=PerformanceEvidenceKind.STANDARD_DISTANCE_PERFORMANCE,
                     target_distance=distance,
                     activity_distance_km=round(candidate.distance_km, 6),
-                    elapsed_time_seconds=round(normalized_seconds, 3),
+                    elapsed_time_seconds=round(candidate.elapsed_time_seconds, 3),
                     pace_seconds_per_km=round(
-                        normalized_seconds
-                        / (10 if distance is StandardDistance.TEN_K else 21.0975),
+                        candidate.elapsed_time_seconds / candidate.distance_km,
                         6,
                     ),
                     session_kind=candidate.session_kind,
@@ -207,7 +207,7 @@ def select_activity_performance_evidence(
                 activity_name=candidate.name,
                 achieved_on=candidate.achieved_on,
                 evidence_kind=PerformanceEvidenceKind.STRONG_TRAINING,
-                target_distance=distance,
+                target_distance=None,
                 activity_distance_km=round(candidate.distance_km, 6),
                 elapsed_time_seconds=round(candidate.elapsed_time_seconds, 3),
                 pace_seconds_per_km=round(
