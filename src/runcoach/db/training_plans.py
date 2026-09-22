@@ -1,7 +1,7 @@
 """Query and persistence services for versioned athlete training plans."""
 
 import json
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import UTC, date, datetime
 from enum import Enum
 from hashlib import sha256
@@ -13,6 +13,8 @@ from sqlalchemy.orm import Session
 
 from runcoach.analytics.performance import StandardDistance
 from runcoach.analytics.training_plan import (
+    PlannedWeek,
+    PlanPhase,
     TrainingGoal,
     TrainingPlanPreview,
     build_training_plan_preview,
@@ -77,6 +79,50 @@ def _stored_result(
         created=created,
         preview=plan.plan_payload,
     )
+
+
+def _retain_completed_weeks(
+    preview: TrainingPlanPreview,
+    previous_payload: PlanPayload,
+) -> TrainingPlanPreview:
+    """Keep completed weekly targets fixed while adapting the remaining outline."""
+
+    previous_weeks = previous_payload.get("weekly_outline")
+    if not isinstance(previous_weeks, list) or len(previous_weeks) != len(preview.weekly_outline):
+        raise TrainingPlanQueryError("Active plan has an invalid weekly outline.")
+
+    detailed_start = next(
+        week.start_date
+        for week in preview.weekly_outline
+        if week.start_date <= preview.first_week[0].scheduled_date <= week.end_date
+    )
+    revised_weeks = list(preview.weekly_outline)
+    for index, generated in enumerate(revised_weeks):
+        if generated.end_date >= detailed_start:
+            break
+        stored = previous_weeks[index]
+        if not isinstance(stored, dict):
+            raise TrainingPlanQueryError("Active plan has an invalid completed week.")
+        try:
+            previous = PlannedWeek(
+                week_number=int(stored["week_number"]),
+                start_date=date.fromisoformat(stored["start_date"]),
+                end_date=date.fromisoformat(stored["end_date"]),
+                phase=PlanPhase(stored["phase"]),
+                target_distance_km=float(stored["target_distance_km"]),
+                long_run_km=float(stored["long_run_km"]),
+                quality_focus=str(stored["quality_focus"]),
+            )
+        except (KeyError, TypeError, ValueError) as error:
+            raise TrainingPlanQueryError("Active plan has an invalid completed week.") from error
+        if (
+            previous.week_number != generated.week_number
+            or previous.start_date != generated.start_date
+            or previous.end_date != generated.end_date
+        ):
+            raise TrainingPlanQueryError("Active plan calendar changed unexpectedly.")
+        revised_weeks[index] = previous
+    return replace(preview, weekly_outline=tuple(revised_weeks))
 
 
 class TrainingPlanQueryService:
@@ -206,6 +252,7 @@ class TrainingPlanPersistenceService:
                     days_per_week=goal.days_per_week,
                     plan_start_date=preserved_start,
                 )
+                preview = _retain_completed_weeks(preview, active_plan.plan_payload)
                 return self._persist_preview(
                     athlete_id=athlete_id,
                     preview=preview,

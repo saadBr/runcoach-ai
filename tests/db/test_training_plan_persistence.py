@@ -194,3 +194,45 @@ def test_load_and_refresh_active_plan(
     assert refreshed.created is False
     assert refreshed.version == 1
     assert captured_start_dates == [date(2026, 9, 7)]
+
+
+def test_refresh_details_current_week_without_rewriting_completed_targets(
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = TrainingPlanPersistenceService(db_session)
+    week_two = PlannedWeek(
+        week_number=2,
+        start_date=date(2026, 9, 14),
+        end_date=date(2026, 9, 20),
+        phase=PlanPhase.BUILD,
+        target_distance_km=72.0,
+        long_run_km=24.0,
+        quality_focus="marathon durability",
+    )
+    original = replace(
+        _preview(as_of_date=date(2026, 9, 8)),
+        weekly_outline=(_preview().weekly_outline[0], week_two),
+    )
+    _stub_preview(monkeypatch, original)
+    _persist(service)
+    db_session.rollback()
+
+    refreshed = replace(
+        original,
+        as_of_date=date(2026, 9, 15),
+        first_week=(replace(original.first_week[0], scheduled_date=date(2026, 9, 15)),),
+        weekly_outline=(
+            replace(original.weekly_outline[0], target_distance_km=80.0),
+            replace(week_two, target_distance_km=76.0),
+        ),
+    )
+    _stub_preview(monkeypatch, refreshed)
+
+    result = service.refresh_active(athlete_id=ATHLETE_ID)
+
+    assert result.created is True
+    assert result.version == 2
+    assert result.preview["first_week"][0]["scheduled_date"] == "2026-09-15"
+    assert result.preview["weekly_outline"][0]["target_distance_km"] == 68.9
+    assert result.preview["weekly_outline"][1]["target_distance_km"] == 76.0

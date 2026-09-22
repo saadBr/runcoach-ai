@@ -173,6 +173,13 @@ def test_refresh_preserves_the_original_plan_calendar() -> None:
 
     assert preview.plan_start_date == date(2026, 9, 7)
     assert preview.weekly_outline[0].start_date == date(2026, 9, 7)
+    assert preview.weekly_outline[1].start_date == date(2026, 9, 14)
+    assert min(session.scheduled_date for session in preview.first_week) >= date(2026, 9, 14)
+    assert max(session.scheduled_date for session in preview.first_week) <= date(2026, 9, 20)
+    assert sum(session.distance_km for session in preview.first_week) == pytest.approx(
+        preview.weekly_outline[1].target_distance_km,
+        abs=0.3,
+    )
 
 
 def test_january_2027_marathon_plan_builds_specific_endurance_safely() -> None:

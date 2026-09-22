@@ -12,7 +12,7 @@ from runcoach.analytics.current_fitness import (
 )
 from runcoach.analytics.performance import StandardDistance, standard_distance_meters
 
-TRAINING_PLAN_VERSION: Final = "goal_plan_preview_v3"
+TRAINING_PLAN_VERSION: Final = "goal_plan_preview_v4"
 MINIMUM_PLAN_DAYS: Final = 14
 MAXIMUM_PLAN_DAYS: Final = 364
 
@@ -525,9 +525,16 @@ def build_training_plan_preview(
         total_weeks=weeks_to_race,
         recent_weekly_km=recent_weekly_km,
     )
+    # Keep the original outline calendar, but date the detailed prescription to
+    # the week supported by the latest evidence. ``first_week`` is retained as
+    # the serialized field name for existing API and stored-plan consumers.
+    detailed_week_index = min(
+        max((current_week_start - plan_start_date).days // 7, 0),
+        len(outline) - 1,
+    )
     first_week = _first_week(
         goal=goal,
-        week=outline[0],
+        week=outline[detailed_week_index],
         fitness=fitness,
         target_estimate=estimate,
     )

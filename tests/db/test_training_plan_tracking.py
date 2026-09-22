@@ -257,6 +257,34 @@ def test_tracking_marks_completed_weeks_and_returns_history(db_session: Session)
     assert result.versions[1].status == "superseded"
 
 
+def test_tracking_uses_refreshed_current_week_sessions(db_session: Session) -> None:
+    _add_plan_history(db_session)
+    active_plan = db_session.query(TrainingPlan).filter_by(status="active").one()
+    payload = dict(active_plan.plan_payload)
+    sessions = list(payload["first_week"])
+    sessions[0] = {**sessions[0], "scheduled_date": "2026-09-14"}
+    sessions[1] = {**sessions[1], "scheduled_date": "2026-09-16"}
+    sessions[2] = {**sessions[2], "scheduled_date": "2026-09-20"}
+    payload["first_week"] = sessions
+    active_plan.plan_payload = payload
+    db_session.commit()
+
+    result = TrainingPlanTrackingService(db_session).overview(
+        athlete_id=ATHLETE_ID,
+        as_of_date=date(2026, 9, 14),
+    )
+
+    assert result.completed_weeks == 1
+    assert result.current_week_number == 2
+    assert result.planned_distance_to_date_km == pytest.approx(80.0)
+    assert [session.scheduled_date for session in result.sessions] == [
+        date(2026, 9, 14),
+        date(2026, 9, 16),
+        date(2026, 9, 20),
+    ]
+    assert result.recommendation_code == "continue_as_planned"
+
+
 def test_tracking_reports_not_started_and_requires_active_plan(db_session: Session) -> None:
     service = TrainingPlanTrackingService(db_session)
     with pytest.raises(TrainingPlanTrackingError, match="No active"):

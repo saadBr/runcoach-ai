@@ -42,6 +42,7 @@ DEFAULT_API_URL = "http://localhost:8000"
 SESSION_TOKEN_KEY = "runcoach_access_token"
 COACH_MESSAGES_KEY = "coach_messages"
 COACH_SESSION_OWNER_KEY = "coach_session_owner"
+RUN_UPLOAD_FEEDBACK_KEY = "run_upload_feedback"
 HISTORY_WEEKS_KEY = "dashboard_history_weeks"
 DEFAULT_HISTORY_WEEKS = 12
 CHART_CONFIG = {"displayModeBar": False, "responsive": True}
@@ -64,6 +65,7 @@ def bind_private_state_to_session(
     owner = sha256(access_token.encode("utf-8")).hexdigest()
     if state.get(COACH_SESSION_OWNER_KEY) != owner:
         state.pop(COACH_MESSAGES_KEY, None)
+        state.pop(RUN_UPLOAD_FEEDBACK_KEY, None)
     state[COACH_SESSION_OWNER_KEY] = owner
 
 
@@ -83,6 +85,7 @@ def clear_authenticated_session() -> None:
     st.session_state.pop(SESSION_TOKEN_KEY, None)
     st.session_state.pop(COACH_SESSION_OWNER_KEY, None)
     st.session_state.pop(COACH_MESSAGES_KEY, None)
+    st.session_state.pop(RUN_UPLOAD_FEEDBACK_KEY, None)
 
 
 def dashboard_history_weeks(state: MutableMapping[str, object]) -> int:
@@ -1052,7 +1055,12 @@ def render_training_plan(plan: TrainingPlanPreview, *, active: bool) -> None:
     target.metric("Recommended target", format_duration(plan.recommended_target_seconds))
     horizon.metric("Plan horizon", f"{plan.weeks_to_race} weeks")
 
-    st.markdown("#### First training week")
+    detailed_week_start = next(
+        week.start_date
+        for week in plan.weekly_outline
+        if week.start_date <= plan.first_week[0].scheduled_date <= week.end_date
+    )
+    st.markdown(f"#### Scheduled sessions · week of {detailed_week_start.isoformat()}")
     first_week = pd.DataFrame.from_records(
         [
             {
@@ -1360,6 +1368,9 @@ def main() -> None:
 
         st.divider()
         st.subheader("Add a run")
+        upload_feedback = st.session_state.pop(RUN_UPLOAD_FEEDBACK_KEY, None)
+        if isinstance(upload_feedback, str):
+            st.success(upload_feedback)
         uploaded_run = st.file_uploader(
             "FIT activity",
             type=["fit", "gz"],
@@ -1387,17 +1398,18 @@ def main() -> None:
                         content=uploaded_run.getvalue(),
                     )
                     if upload_result.status == "duplicate":
-                        st.info("This run was already imported; coaching was refreshed.")
+                        feedback = "This run was already imported; coaching was refreshed."
                     else:
                         distance = upload_result.activity.distance_km
                         distance_text = (
                             "distance unavailable" if distance is None else f"{distance:.1f} km"
                         )
-                        st.success(
+                        feedback = (
                             f"Added {upload_result.activity.title} ({distance_text}) "
                             "and updated coaching."
                         )
-                    st.caption(upload_result.tracking.recommendation)
+                    st.session_state[RUN_UPLOAD_FEEDBACK_KEY] = feedback
+                    st.rerun()
                 except (DashboardApiError, ValidationError, ValueError) as error:
                     st.error("The run could not be imported.")
                     st.caption(str(error))

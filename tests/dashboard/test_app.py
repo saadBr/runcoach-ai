@@ -17,6 +17,7 @@ from runcoach.dashboard.app import (
     COACH_SESSION_OWNER_KEY,
     DEFAULT_HISTORY_WEEKS,
     HISTORY_WEEKS_KEY,
+    RUN_UPLOAD_FEEDBACK_KEY,
     SESSION_TOKEN_KEY,
     bind_private_state_to_session,
     daily_workload_frame,
@@ -73,14 +74,17 @@ def test_private_chat_state_is_preserved_only_for_the_same_session() -> None:
 
     bind_private_state_to_session(state, "first-session-token")
     state[COACH_MESSAGES_KEY] = [{"role": "user", "content": "Private question"}]
+    state[RUN_UPLOAD_FEEDBACK_KEY] = "Private upload result"
     original_owner = state[COACH_SESSION_OWNER_KEY]
 
     bind_private_state_to_session(state, "first-session-token")
     assert COACH_MESSAGES_KEY in state
+    assert RUN_UPLOAD_FEEDBACK_KEY in state
     assert state[COACH_SESSION_OWNER_KEY] == original_owner
 
     bind_private_state_to_session(state, "different-account-session-token")
     assert COACH_MESSAGES_KEY not in state
+    assert RUN_UPLOAD_FEEDBACK_KEY not in state
     assert state[COACH_SESSION_OWNER_KEY] != original_owner
 
 

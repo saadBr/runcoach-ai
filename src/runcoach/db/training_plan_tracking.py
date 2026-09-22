@@ -44,7 +44,7 @@ class PlanWeekProgress:
 
 @dataclass(frozen=True, slots=True)
 class PlanSessionProgress:
-    """One prescribed first-week session matched to canonical activity evidence."""
+    """One dated session matched to canonical activity evidence."""
 
     scheduled_date: date
     kind: str
@@ -149,9 +149,9 @@ def _week_payloads(payload: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _session_payloads(payload: dict[str, Any]) -> list[dict[str, Any]]:
-    sessions = _sequence(payload.get("first_week"), "first-week sessions")
+    sessions = _sequence(payload.get("first_week"), "detailed sessions")
     if not sessions:
-        raise TrainingPlanTrackingError("Stored plan first-week sessions are empty.")
+        raise TrainingPlanTrackingError("Stored plan detailed sessions are empty.")
     return [_mapping(session, "session") for session in sessions]
 
 
@@ -453,7 +453,7 @@ def _coaching_recommendation(
         )
     return (
         "first_week_complete",
-        "The detailed first week is complete. Refresh the active plan after recalculating "
+        "The detailed week is complete. Update the active plan after recalculating "
         "analytics to generate the next dated schedule.",
     )
 
@@ -535,6 +535,9 @@ class TrainingPlanTrackingService:
         actual_to_date = 0.0
         current_week_number: int | None = None
         completed_weeks = 0
+        detailed_session_date = _date_value(
+            _session_payloads(payload)[0].get("scheduled_date"), "session date"
+        )
 
         for week_payload in week_payloads:
             week_number = _int_value(week_payload.get("week_number"), "week number")
@@ -568,7 +571,7 @@ class TrainingPlanTrackingService:
                 current_week_number = week_number
                 planned_fraction = min((resolved_as_of - start).days + 1, 7) / 7
 
-            if week_number == 1 and week_status == "in_progress":
+            if week_status == "in_progress" and start <= detailed_session_date <= end:
                 planned_to_date += _scheduled_distance_to_date(
                     payload=payload,
                     as_of_date=resolved_as_of,
