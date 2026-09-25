@@ -11,6 +11,6 @@ def test_liveness_returns_service_metadata(client: TestClient) -> None:
     assert response.status_code == 200
     assert response.json() == {
         "status": "ok",
-        "service": "RunCoach AI",
+        "service": "PaceCraft AI",
         "environment": "test",
     }

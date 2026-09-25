@@ -2,7 +2,7 @@
 
 ## Status
 
-- Project: RunCoach AI
+- Project: PaceCraft AI
 - Document state: Initial approved baseline
 - Last updated: 2026-08-23
 
@@ -106,7 +106,7 @@ The project is successful when:
 
 ## Boundaries
 
-RunCoach AI is a coaching-support and academic research prototype. It is not:
+PaceCraft AI is a coaching-support and academic research prototype. It is not:
 
 - A medical device.
 - An injury-diagnosis system.

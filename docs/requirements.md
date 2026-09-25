@@ -2,7 +2,7 @@
 
 ## Status
 
-- Project: RunCoach AI
+- Project: PaceCraft AI
 - Document state: Approved baseline with multi-athlete onboarding extension
 - Last updated: 2026-09-07
 - MVP duration: Four weeks

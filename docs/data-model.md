@@ -2,7 +2,7 @@
 
 ## Status
 
-- Project: RunCoach AI
+- Project: PaceCraft AI
 - Document state: Implemented through required Strava-history onboarding
 - Last updated: 2026-09-07
 - Database: PostgreSQL 17
@@ -512,7 +512,7 @@ One row represents a verified verified standard-distance result that became a pe
 
 The evidence fields are unique for one activity and result. Historical PB rows remain
 available after a faster result supersedes them. Provider best-effort values remain
-distinguishable from times calculated by RunCoach AI.
+distinguishable from times calculated by PaceCraft AI.
 ### `readiness_snapshots`
 
 | Column | Type | Rules |

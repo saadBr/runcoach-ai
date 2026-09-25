@@ -47,4 +47,4 @@ jobs:
         run: docker compose config --quiet
 
       - name: Build API image
-        run: docker build --tag runcoach-ai:ci .
+        run: docker build --tag pacecraft-ai:ci .

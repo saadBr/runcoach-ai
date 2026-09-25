@@ -2,7 +2,7 @@
 
 ## Purpose
 
-RunCoach AI is a Master's graduation project that analyzes exported Garmin and Strava
+PaceCraft AI is a Master's graduation project that analyzes exported Garmin and Strava
 activities, calculates deterministic training and performance metrics, evaluates an
 appropriately scoped machine-learning feature, and produces evidence-backed coaching
 explanations.

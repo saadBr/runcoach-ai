@@ -2,7 +2,7 @@
 
 ## Status
 
-- Project: RunCoach AI
+- Project: PaceCraft AI
 - Document state: Approved workflow with conversational slice implemented
 - Last updated: 2026-09-07
 - Orchestrator: Direct typed pipeline with durable execution audit; LangGraph remains planned

@@ -1,1 +1,1 @@
-"""HTTP API for RunCoach AI."""
+"""HTTP API for PaceCraft AI."""

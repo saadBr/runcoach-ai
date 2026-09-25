@@ -10,7 +10,7 @@
 ## Purpose
 
 This log provides a reproducible record of every analytical and machine-learning experiment
-performed in RunCoach AI. It separates proposals from completed work, prevents selective
+performed in PaceCraft AI. It separates proposals from completed work, prevents selective
 reporting, and connects each conclusion to a dataset manifest, code revision, feature definition,
 evaluation protocol, and stored artifact.
 
@@ -84,7 +84,7 @@ Completed as a documentation decision. No athlete dataset was analyzed.
 
 ### Question
 
-What minimum controls must apply before RunCoach AI reports a model result?
+What minimum controls must apply before PaceCraft AI reports a model result?
 
 ### Decision
 

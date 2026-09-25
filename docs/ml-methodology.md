@@ -2,7 +2,7 @@
 
 ## Status
 
-- Project: RunCoach AI
+- Project: PaceCraft AI
 - Document state: Provisional methodology pending label audit
 - Last updated: 2026-09-05
 - Deterministic evidence: exact-distance rolling interpolation

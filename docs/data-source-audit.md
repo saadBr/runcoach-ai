@@ -218,7 +218,7 @@ Additional coverage:
 | Heart-rate zone 6 | 82/85 |
 
 Garmin-produced VO2max and training-effect values are vendor metrics. They must retain
-source attribution and must not be presented as RunCoach-derived or machine-learning
+source attribution and must not be presented as PaceCraft-derived or machine-learning
 outputs.
 
 ## Strava CSV schema findings
@@ -303,7 +303,7 @@ For an overlapping running activity, canonical fields follow this order:
 | Provider-specific estimates | Original provider namespace | None |
 
 Source precedence is field-level rather than row-level. A canonical activity may combine
-Garmin sensor data, Strava historical metadata, and derived RunCoach metrics while retaining
+Garmin sensor data, Strava historical metadata, and derived PaceCraft metrics while retaining
 complete provenance.
 
 ## Missing-data policy

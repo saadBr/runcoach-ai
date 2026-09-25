@@ -10,11 +10,11 @@ Accepted
 
 ## Decision owners
 
-RunCoach AI project team
+PaceCraft AI project team
 
 ## Context
 
-RunCoach AI must ingest heterogeneous activity exports, normalize and deduplicate records, calculate
+PaceCraft AI must ingest heterogeneous activity exports, normalize and deduplicate records, calculate
 deterministic training indicators, evaluate predictive models, orchestrate controlled coaching
 recommendations, expose an API, and support an analytical user interface.
 
@@ -45,7 +45,7 @@ technology names.
 
 ## Decision
 
-RunCoach AI will use a modular monolith as its baseline application architecture.
+PaceCraft AI will use a modular monolith as its baseline application architecture.
 
 One Python codebase will contain explicit modules for:
 

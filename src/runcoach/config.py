@@ -10,7 +10,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    """Validated runtime settings for RunCoach AI."""
+    """Validated runtime settings for PaceCraft AI."""
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -19,7 +19,7 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    app_name: str = "RunCoach AI"
+    app_name: str = "PaceCraft AI"
     environment: Literal["development", "test", "production"] = "development"
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
     api_host: str = "0.0.0.0"

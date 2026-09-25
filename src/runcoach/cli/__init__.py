@@ -1,1 +1,1 @@
-"""Command-line entry points for RunCoach AI."""
+"""Command-line entry points for PaceCraft AI."""

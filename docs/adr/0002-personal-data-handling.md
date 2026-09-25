@@ -10,7 +10,7 @@ Accepted
 
 ## Decision owners
 
-RunCoach AI project team and data owner
+PaceCraft AI project team and data owner
 
 ## Context
 

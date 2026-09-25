@@ -1,5 +1,5 @@
 [project]
-name = "runcoach-ai"
+name = "pacecraft-ai"
 version = "0.1.0"
 description = "AI-powered running performance analysis and coaching platform"
 readme = "README.md"

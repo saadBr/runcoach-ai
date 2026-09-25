@@ -9,7 +9,7 @@
 
 ## Core message
 
-RunCoach AI transforms fragmented personal running exports into traceable training evidence,
+PaceCraft AI transforms fragmented personal running exports into traceable training evidence,
 validated predictions, and controlled coaching recommendations while preserving deterministic
 calculation, privacy, and scientific honesty.
 
@@ -41,7 +41,7 @@ flowchart LR
 
 ### Slide 1: Title and product statement
 
-**Title:** RunCoach AI
+**Title:** PaceCraft AI
 
 **Subtitle:** Privacy-aware running analytics, performance prediction, and evidence-grounded coaching
 
@@ -111,7 +111,7 @@ Show:
 
 - Athlete.
 - Garmin and Strava exports.
-- RunCoach AI.
+- PaceCraft AI.
 - PostgreSQL.
 - Optional LLM provider.
 - Sanitized cloud demonstration.

@@ -31,8 +31,10 @@ __pycache__/
 .venv/
 venv/
 .pytest_cache/
+.pytest-*-codex*/
 .mypy_cache/
 .ruff_cache/
+.uv-cache-codex/
 .coverage
 .coverage.*
 htmlcov/

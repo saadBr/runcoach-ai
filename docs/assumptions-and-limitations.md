@@ -8,7 +8,7 @@
 
 ## Purpose
 
-RunCoach AI combines personal activity records, deterministic training analytics, statistical
+PaceCraft AI combines personal activity records, deterministic training analytics, statistical
 models, and controlled language-model interpretation. Each layer depends on assumptions and has
 limits that affect how its outputs may be interpreted.
 
@@ -352,7 +352,7 @@ At each verified release, review whether:
 
 ## Current conclusion
 
-RunCoach AI can provide a rigorous personalized case study when its outputs remain traceable to
+PaceCraft AI can provide a rigorous personalized case study when its outputs remain traceable to
 validated data and versioned methods. Its most important boundaries are incomplete historical
 sensor coverage, uncertain race-label volume, single-athlete external validity, estimated
 physiological parameters, and the difference between warning indicators and medical conclusions.

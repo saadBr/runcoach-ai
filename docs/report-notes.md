@@ -9,12 +9,12 @@
 
 ## Working title
 
-**RunCoach AI: A Privacy-Aware Data Engineering and Intelligent Coaching Platform for Longitudinal
+**PaceCraft AI: A Privacy-Aware Data Engineering and Intelligent Coaching Platform for Longitudinal
 Running Performance Analysis**
 
 Alternative concise title:
 
-**RunCoach AI: Evidence-Grounded Running Analytics, Performance Prediction, and Coaching**
+**PaceCraft AI: Evidence-Grounded Running Analytics, Performance Prediction, and Coaching**
 
 ## Central argument
 

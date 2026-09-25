@@ -9,7 +9,7 @@
 
 ## Purpose
 
-This document defines how RunCoach AI will be executed reproducibly on a developer machine,
+This document defines how PaceCraft AI will be executed reproducibly on a developer machine,
 validated in continuous integration, and deployed as a sanitized cloud demonstration.
 
 The deployment strategy supports these project objectives:

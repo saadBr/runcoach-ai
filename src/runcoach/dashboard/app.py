@@ -1,4 +1,4 @@
-"""Streamlit analytical dashboard backed exclusively by the RunCoach API."""
+"""Streamlit analytical dashboard backed exclusively by the PaceCraft API."""
 
 import os
 import re
@@ -242,7 +242,7 @@ def upload_onboarding_archive(
 def render_login(api_url: str) -> None:
     """Render sign-in and required-history registration without retaining passwords."""
 
-    st.title("RunCoach AI")
+    st.title("PaceCraft AI")
     st.caption("Sign in, or create an evidence-backed plan from your Strava history.")
     sign_in_tab, signup_tab = st.tabs(("Sign in", "Create account"))
 
@@ -273,7 +273,7 @@ def render_login(api_url: str) -> None:
 
     with signup_tab:
         st.info(
-            "The original Strava export ZIP is required. RunCoach imports it privately, "
+            "The original Strava export ZIP is required. PaceCraft imports it privately, "
             "then creates analytics and your first plan."
         )
         today = date.today()
@@ -404,7 +404,7 @@ def render_login(api_url: str) -> None:
                 "several minutes; keep this page open."
             )
             progress.write(
-                "Next, RunCoach will calculate your fitness evidence and create your "
+                "Next, PaceCraft will calculate your fitness evidence and create your "
                 "first training plan."
             )
             upload_onboarding_archive(
@@ -459,7 +459,7 @@ def render_pending_onboarding(api_url: str, account: CurrentAccount) -> None:
             "minutes; keep this page open."
         )
         progress.write(
-            "RunCoach will then calculate your fitness evidence and create your first plan."
+            "PaceCraft will then calculate your fitness evidence and create your first plan."
         )
         try:
             completed = upload_onboarding_archive(
@@ -1204,9 +1204,9 @@ def render_plan_tracking(tracking: ActivePlanTracking) -> None:
 
 
 def render_conversational_coach(api_url: str) -> None:
-    """Render a session-local conversation grounded in current RunCoach evidence."""
+    """Render a session-local conversation grounded in current PaceCraft evidence."""
 
-    st.subheader("Ask RunCoach")
+    st.subheader("Ask PaceCraft")
     st.caption(
         "Ask about your current fitness, race goal, recent training, recovery, or what to run next."
     )
@@ -1252,7 +1252,7 @@ def render_conversational_coach(api_url: str) -> None:
     with st.chat_message("assistant"):
         st.status("Thinking...", expanded=False)
     st.chat_input(
-        "RunCoach is thinking...",
+        "PaceCraft is thinking...",
         disabled=True,
         key="coach_pending_input",
     )
@@ -1278,10 +1278,10 @@ def render_conversational_coach(api_url: str) -> None:
 
 
 def main() -> None:
-    """Render the RunCoach dashboard."""
+    """Render the PaceCraft dashboard."""
 
     st.set_page_config(
-        page_title="RunCoach AI",
+        page_title="PaceCraft AI",
         page_icon="🏃",
         layout="wide",
         initial_sidebar_state="expanded",
@@ -1311,7 +1311,7 @@ def main() -> None:
         return
     except (DashboardApiError, ValidationError, ValueError):
         loading_placeholder.empty()
-        st.title("RunCoach AI")
+        st.title("PaceCraft AI")
         st.error("We couldn't load your dashboard. Check the service and try again.")
         if st.button("Try again", type="primary"):
             st.rerun()
@@ -1335,14 +1335,14 @@ def main() -> None:
         return
     except (DashboardApiError, ValidationError, ValueError):
         loading_placeholder.empty()
-        st.title("RunCoach AI")
+        st.title("PaceCraft AI")
         st.error("We couldn't load your dashboard. Check the service and try again.")
         if st.button("Try again", type="primary"):
             st.rerun()
         return
     loading_placeholder.empty()
 
-    st.title("RunCoach AI")
+    st.title("PaceCraft AI")
     st.caption("Personalized performance insights and training guidance from your running history.")
 
     with st.sidebar:
@@ -1383,7 +1383,7 @@ def main() -> None:
                 "Run title",
                 value=upload_title_from_filename(uploaded_run.name),
                 key=f"run_title_{uploaded_run.name}",
-                help="Edit this so RunCoach can recognize easy, tempo, hills, long, or race work.",
+                help="Edit this so PaceCraft can recognize easy, tempo, hills, long, or race work.",
             )
             if st.button(
                 "Upload and update coaching",
@@ -1656,7 +1656,7 @@ def main() -> None:
 
     st.divider()
     st.caption(
-        "RunCoach AI supports coaching decisions but does not diagnose "
+        "PaceCraft AI supports coaching decisions but does not diagnose "
         "injury, measure fitness directly, or guarantee race outcomes."
     )
 

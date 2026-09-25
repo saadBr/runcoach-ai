@@ -667,7 +667,7 @@ def test_dashboard_requires_login_before_loading_private_data(
 
     assert dashboard_api is None
     assert not app.exception
-    assert app.title[0].value == "RunCoach AI"
+    assert app.title[0].value == "PaceCraft AI"
     text_labels = [field.label for field in app.text_input]
     assert {"Email", "Password", "Athlete name", "Account email"} <= set(text_labels)
     assert "Sign in" in [button.label for button in app.button]
@@ -745,7 +745,7 @@ def test_dashboard_renders_validated_analytics(
 
     assert dashboard_api is None
     assert not app.exception
-    assert app.title[0].value == "RunCoach AI"
+    assert app.title[0].value == "PaceCraft AI"
     assert "Signed in as Synthetic Athlete" in [message.value for message in app.success]
     assert [metric.label for metric in app.metric[:5]] == [
         "Total runs",

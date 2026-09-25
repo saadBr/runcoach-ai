@@ -1,6 +1,6 @@
-# RunCoach AI
+# PaceCraft AI
 
-RunCoach AI is an AI-powered running performance and coaching platform that transforms
+PaceCraft AI is an AI-powered running performance and coaching platform that transforms
 Garmin and Strava exports into validated activity history, deterministic training analytics,
 performance models, and evidence-backed coaching recommendations.
 
@@ -18,7 +18,7 @@ An athlete's history can be fragmented across platforms, formats, sensor coverag
 periods. Provider dashboards also expose results without always providing reproducible
 methodology, source provenance, or controlled integration with personalized coaching logic.
 
-RunCoach AI creates a reproducible pipeline that:
+PaceCraft AI creates a reproducible pipeline that:
 
 - Imports exported Garmin and Strava data.
 - Validates and normalizes heterogeneous records.
@@ -78,7 +78,7 @@ The operational data pipeline currently provides:
 - Operational account login, session inspection, logout, and authenticated athlete ownership
   across private analytics and coaching endpoints.
 - An optional stateless OpenAI Responses API adapter with schema-constrained output; numeric
-  predictions and training prescriptions remain owned by versioned RunCoach code.
+  predictions and training prescriptions remain owned by versioned PaceCraft code.
 - Independent, health-checked API, dashboard, and PostgreSQL Compose services.
 
 ## Architecture

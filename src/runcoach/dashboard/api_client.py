@@ -1,4 +1,4 @@
-"""Typed HTTP boundary between the dashboard and the RunCoach API."""
+"""Typed HTTP boundary between the dashboard and the PaceCraft API."""
 
 import json
 from collections.abc import Mapping
@@ -28,7 +28,7 @@ class DashboardNotFoundError(DashboardApiError):
 def _http_error_message(error: HTTPError) -> str:
     """Return an API's sanitized error detail when one is available."""
 
-    fallback = f"RunCoach API returned HTTP {error.code}."
+    fallback = f"PaceCraft API returned HTTP {error.code}."
     try:
         payload: object = json.loads(error.read(64 * 1024).decode("utf-8"))
     except (JSONDecodeError, UnicodeDecodeError, OSError, ValueError):
@@ -133,7 +133,7 @@ class RunCoachApiClient:
             raise ValueError("Logout requires an API access token.")
         response_body = self._request_bytes("/api/v1/auth/logout", method="POST")
         if response_body:
-            raise DashboardApiError("RunCoach API returned unexpected logout content.")
+            raise DashboardApiError("PaceCraft API returned unexpected logout content.")
 
     def get_overview(self) -> JsonObject:
         """Return the current analytics overview."""
@@ -372,10 +372,10 @@ class RunCoachApiClient:
         try:
             payload: object = json.loads(response_body.decode("utf-8"))
         except (JSONDecodeError, UnicodeDecodeError) as error:
-            raise DashboardApiError("RunCoach API returned an invalid JSON response.") from error
+            raise DashboardApiError("PaceCraft API returned an invalid JSON response.") from error
 
         if not isinstance(payload, dict):
-            raise DashboardApiError("RunCoach API returned an unexpected response structure.")
+            raise DashboardApiError("PaceCraft API returned an unexpected response structure.")
 
         return cast(JsonObject, payload)
 
@@ -420,6 +420,6 @@ class RunCoachApiClient:
             raise DashboardApiError(_http_error_message(error)) from error
         except (TimeoutError, URLError) as error:
             raise DashboardApiError(
-                "RunCoach API is unavailable or did not respond in time."
+                "PaceCraft API is unavailable or did not respond in time."
             ) from error
         return cast(bytes, response_body)

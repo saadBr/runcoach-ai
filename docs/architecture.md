@@ -2,7 +2,7 @@
 
 ## Document status
 
-- Project: RunCoach AI
+- Project: PaceCraft AI
 - Document state: Living architecture aligned with the verified implementation
 - Last updated: 2026-09-07
 - Architecture style: Modular monolith with separate runtime processes
@@ -10,7 +10,7 @@
 
 ## Purpose
 
-RunCoach AI transforms heterogeneous Garmin and Strava exports into a canonical running
+PaceCraft AI transforms heterogeneous Garmin and Strava exports into a canonical running
 history, deterministic training analytics, performance evidence, and controlled coaching
 recommendations.
 
@@ -41,7 +41,7 @@ The architecture is shaped by the following priorities:
 
 ## Primary architectural decision
 
-RunCoach AI uses a modular monolith.
+PaceCraft AI uses a modular monolith.
 
 All modules share:
 
@@ -113,10 +113,10 @@ The following remain planned and require their own implementation and validation
 
 ```mermaid
 flowchart LR
-    Athlete["Athlete"] --> UI["RunCoach AI dashboard and CLI"]
+    Athlete["Athlete"] --> UI["PaceCraft AI dashboard and CLI"]
     Exports["Garmin and Strava exports"] --> Private["Ignored private data area"]
     Private --> CLI["Import commands"]
-    CLI --> System["RunCoach AI application"]
+    CLI --> System["PaceCraft AI application"]
     UI --> System
     System --> Athlete
 

@@ -2,7 +2,7 @@
 
 ## Status
 
-- Project: RunCoach AI
+- Project: PaceCraft AI
 - Document state: Initial approved baseline
 - Last updated: 2026-08-23
 - Test runner: Pytest
@@ -443,7 +443,7 @@ uv run ruff check .
 uv run mypy src tests
 uv run pytest --cov=runcoach --cov-report=term-missing
 docker compose config --quiet
-docker build --tag runcoach-ai:ci .
+docker build --tag pacecraft-ai:ci .
 ```
 
 A change cannot be declared complete while a relevant gate fails.

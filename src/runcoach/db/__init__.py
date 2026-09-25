@@ -1,1 +1,1 @@
-"""Database infrastructure for RunCoach AI."""
+"""Database infrastructure for PaceCraft AI."""
