@@ -607,3 +607,7 @@ docker compose config --quiet
 - [Assumptions and limitations](docs/assumptions-and-limitations.md)
 - [Report notes](docs/report-notes.md)
 - [Presentation outline](docs/presentation-outline.md)
+
+## License
+
+PaceCraft AI is distributed under the MIT License. See [LICENSE](LICENSE) for details.
